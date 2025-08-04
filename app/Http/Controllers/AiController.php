@@ -113,8 +113,8 @@ class AiController extends Controller
 
     public function addFileGoogleapis(Request $request)
     {
-        // $apiKey = 'AIzaSyD_1NjI45cgz82yuuzGuWmW2cmLu4FHBpo';
-        $apiKey = 'AIzaSyDTKpHyUvqayNsdPWyy5ItqLcN67CIlNV4';
+        // $apiKey = '';
+        $apiKey = '';
 
         //https://apicontafacil.internow.com.mx/archivos_uploads/contexto_ai/pdf_67522eedc72fc.pdf
         $fileUrl = "https://apicontafacil.internow.com.mx/archivos_uploads/contexto_ai/pdf_67522eedc72fc.pdf"; // Ruta pública
@@ -153,8 +153,8 @@ class AiController extends Controller
 
     public function preguntaGoogleapis(Request $request)
     {
-        // $apiKey = 'AIzaSyD_1NjI45cgz82yuuzGuWmW2cmLu4FHBpo';
-        $apiKey = 'AIzaSyDTKpHyUvqayNsdPWyy5ItqLcN67CIlNV4';
+        // $apiKey = '';
+        $apiKey = '';
 
         // $fileUri = 'https://generativelanguage.googleapis.com/v1beta/files/ouffgs8fp9c8';
         $fileUri = 'https://generativelanguage.googleapis.com/v1beta/files/9es9fsdn7yej';
