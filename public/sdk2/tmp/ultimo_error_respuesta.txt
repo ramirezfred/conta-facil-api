@@ -1,0 +1,1 @@
+a:3:{s:16:"codigo_mf_numero";i:7;s:15:"codigo_mf_texto";s:45:"ERROR CONVIRTIENDO CERTIFICADOS, REVISE CLAVE";s:9:"ejecucion";d:381.68899999999996;}

@@ -1,0 +1,25 @@
+@font-face {
+    font-family: 'DancingScript-VariableFont_wght';
+    font-style: normal;
+    font-weight: normal;
+    /*src: url("/fonts/DancingScript-VariableFont_wght.ttf") format('truetype');*/
+    src: url("/var/www/html/apitree.internow.com.mx/public/fonts/DancingScript-VariableFont_wght.ttf") format('truetype');
+}
+
+@font-face {
+    font-family: 'DancingScript-Regular';
+    font-style: normal;
+    font-weight: normal;
+    /*src: url("/fonts/DancingScript-Regular.ttf") format('truetype');*/
+    src: url("/var/www/html/apitree.internow.com.mx/public/fonts/DancingScript-Regular.ttf") format('truetype');
+}
+
+.mi-font {
+    font-family: 'DancingScript-VariableFont_wght';
+    font-weight: normal;
+}
+
+.mi-font-regular {
+    font-family: 'DancingScript-Regular';
+    font-weight: normal;
+}
