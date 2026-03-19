@@ -21,35 +21,37 @@
         padding: 20px;
         border: 20px solid #4285CB;">
 
-      <div style="text-align: center;">
-          Emitido por Conta Fácil AM
-      </div>
-      <br><br><br>
+        <div style="text-align: center;">
+            Emitido por Conta Fácil AM
+        </div>
+        <br><br><br>
 
-      <div style="text-align: center;">
-          Hola, {{$Nombre}}
-      </div>
+        <div style="text-align: center;">
+            Hola, {{$Nombre}}
+        </div>
 
-      <div style="text-align: center;">
-          <strong>Rfc: {{$Rfc}}</strong>
-      </div>
-      <br>
+        @if(isset($Rfc) && $Rfc)
+        <div style="text-align: center;">
+            <strong>Rfc: {{ $Rfc }}</strong>
+        </div>
+        @endif
+        <br>
 
-      <div style="text-align: center;">
-          Te adjuntamos tu factura.
-      </div>
-   
-      <br><br>
-      <div style="text-align: center; font-size: 18px;">
-          Estamos a tu servicio.
-      </div>
+        <div style="text-align: center;">
+            Te adjuntamos tu factura.
+        </div>
+    
+        <br><br>
+        <div style="text-align: center; font-size: 18px;">
+            Estamos a tu servicio.
+        </div>
 
-      <br><br><br>
-      <div style="text-align: center;">
-        <a href="https://wa.me/5217751936000" target="_blank" style="color: #000000;">
-          Internow IA
-        </a>
-      </div>
+        <br><br><br>
+        <div style="text-align: center;">
+            <a href="https://wa.me/5217751936000" target="_blank" style="color: #000000;">
+            Internow IA
+            </a>
+        </div>
 
     </div>
 

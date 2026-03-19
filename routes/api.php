@@ -91,16 +91,18 @@ Route::get('cfdi/set_flag_algoritmo_factura', [FacturaController::class, 'setFla
 Route::get('cfdi/aplicar_algoritmo_factura/semanal', [FacturaController::class, 'aplicarAlgoritmoSemanalFactura']);
 Route::get('cfdi/aplicar_algoritmo_factura/mensual', [FacturaController::class, 'aplicarAlgoritmoMansualFactura']);
 
+
 //----Pruebas PruebasController
 Route::get('pruebas/test_image', [PruebasController::class, 'testImage']);
 Route::get('pruebas/test_image2', [PruebasController::class, 'extractColors']);
 Route::get('pruebas/fecha', [PruebasController::class, 'fecha']);
 Route::post('pruebas/upload_pdf', [PruebasController::class, 'upload']);
 Route::get('pruebas/email_admin_new_user/{user_id}', [PruebasController::class, 'emailAdminNewUser']);
-Route::get('pruebas/test_fecha', [PruebasController::class, 'testFecha']);
 Route::post('pruebas/test_catalogos_sat', [PruebasController::class, 'testCatalogosSat']);
+Route::get('pruebas/set_timbres_user', [PruebasController::class, 'setTimbresUser']);
 
 Route::get('cfdi/factura_pdf/{factura_id}', [FacturaController::class, 'facturaPdf']);
+Route::get('cfdi/timbrar_prueba/{user_id}', [FacturaController::class, 'timbrarFacturaDePrueba']);
 
 //----Pruebas DashboardController
 Route::get('dashboard/cat_usuarios', [DashboardController::class, 'getCatalogoUsers']);
@@ -228,6 +230,8 @@ Route::group(['middleware' => ['jwt.verify']], function() {
     Route::post('cfdi/timbrar_desde_panel/{empresa_id}', [FacturaController::class, 'timbrarDesdePanel']);
     Route::post('cfdi/timbrar_desde_panel_sandbox/{empresa_id}', [FacturaController::class, 'timbrarDesdePanelSandbox']);
     Route::put('cfdi/update_status_pay/{factura_id}', [FacturaController::class, 'updateStatusPay']);
+    Route::post('cfdi/timbrar_venta/{venta_id}', [FacturaController::class, 'timbrarVenta']);
+    Route::post('cfdi/cancelar_venta/{venta_id}', [FacturaController::class, 'cancelarVenta']);
 
     //----Pruebas DashboardController
     Route::get('dashboard/contadores/{user_id}', [DashboardController::class, 'contadores']);
@@ -366,6 +370,21 @@ Route::group(['middleware' => ['jwt.verify.admin']], function() {
     Route::get('bot_sistema/get_files', [BotSistemaController::class, 'getFilesGoogleAI']);
     Route::delete('bot_sistema/delete_file', [BotSistemaController::class, 'deleteFileGoogleAI']);
 
+});
+
+// Cargar rutas del ERP
+Route::prefix('erp')->group(function () {
+    require __DIR__ . '/api/erp.php';
+});
+
+// Cargar rutas del CRM
+Route::prefix('crm')->group(function () {
+    require __DIR__ . '/api/crm.php';
+});
+
+// Cargar rutas del POS
+Route::prefix('pos')->group(function () {
+    require __DIR__ . '/api/pos.php';
 });
 
     

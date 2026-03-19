@@ -95,4 +95,9 @@ class CfdiProducto extends Model
     {
         return $this->belongsTo(Cfdi40ClaveUnidad::class, 'ClaveUnidad');
     }
+
+    public function mi_forma_pago()
+    {
+        return $this->belongsTo(Cfdi40FormaPago::class, 'FormaPago');
+    }
 }

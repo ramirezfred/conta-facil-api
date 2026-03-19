@@ -39,7 +39,9 @@ use App\Models\User;
 use App\Models\BotMessage;
 use App\Models\BotSistema;
 use App\Models\CfdiEmpresa;
+use App\Models\CfdiCliente;
 use App\Models\CfdiProducto;
+use App\Models\Cfdi40FormaPago;
 
 date_default_timezone_set('America/Mexico_City');
 
@@ -109,18 +111,36 @@ class WebhooksWhatsappController extends Controller
                             $id = $change['value']['messages'][0]['id'];
                             $type = $change['value']['messages'][0]['type'];
 
-                            if ($type != 'text'){
-                                // file_put_contents('webhook_log.txt', print_r($input, true), FILE_APPEND);
+                            if (
+                                ($type != 'text' && $type != 'document') ||
+                                (
+                                    $type == 'document' && 
+                                    $change['value']['messages'][0]['document']['mime_type'] != 'application/octet-stream' &&
+                                    $change['value']['messages'][0]['document']['mime_type'] != 'application/pkix-cert'
+                                )
+                            ){
+
+                                file_put_contents('webhook_log.txt', print_r($input, true), FILE_APPEND);
 
                                 return response('OK', 200);
                             }
 
-                            $body = $change['value']['messages'][0]['text']['body'];
-                            
-                            // Por ejemplo, guardar los datos recibidos en un archivo de registro
+                            $this->_typingIndicatorWS($id);
 
+                            //guardar los datos recibidos en un archivo de registro
                             file_put_contents('webhook_log.txt', print_r($input, true), FILE_APPEND);
 
+                            if($type == 'document'){
+                                $fileId = $change['value']['messages'][0]['document']['id'];
+                                $fileName = uniqid().'_'.$change['value']['messages'][0]['document']['filename'];
+
+                                $archivo = $this->_downloadWhatsAppMediaWS($fileId,$fileName);
+
+                                $body = $archivo;
+                            }else{
+                                $body = $change['value']['messages'][0]['text']['body'];
+                            }
+                            
                             // // $respuestaAI = $this->messageAIChatPDF([$body]);
                             // $respuestaAI = $this->messageGoogleAI([$body]);
                             // // $resp = $this->_messageTextWS($from,'Hola '.$name);
@@ -453,46 +473,49 @@ class WebhooksWhatsappController extends Controller
 
         $user->mensajes = $data;
 
+        // Obtener datos de configuración 
+        $datos_configuracion = $this->botService->getStatusConfiguracion($user_id);
+
+        $user->config_completed = $datos_configuracion['config_completed'];
+        $user->config = $datos_configuracion['datos_recolectados'];
+
+        file_put_contents('webhook_log.txt', print_r($datos_configuracion['datos_recolectados'], true), FILE_APPEND);
+
         $resp = $this->procesarMessagesAI($user);
 
         if(isset($resp['function']) && isset($resp['link'])){
 
-            // if($resp['function'] == 'historial'){
-
-            //     if($resp['args']->lista == "Ingresos" || $resp['args']->lista == "Gastos"){
-            //         $this->messageDocumentToUser($user,$resp['message'],$resp['link'],'document');
-            //     }else{
-
-            //         // Expresión regular para eliminar ambos dominios y todo lo que 
-            //         // venga después hasta un espacio o fin de línea
-            //         $pattern = '/https:\/\/(api)?contafacil\.internow\.com\.mx\/[^\s]*/';
-
-            //         // Eliminar los links
-            //         $texto_sin_links = preg_replace($pattern, '', $resp['message']);
-
-            //         $link_acortado = $this->botService->getTinyUrl($resp['link']);
-
-            //         $resp_message = $texto_sin_links . "\n\n" . $link_acortado;
-
-            //         $this->messageTextToUser($user,$resp_message);
-
-            //     }
-
-            // }else{
-            //     $this->messageDocumentToUser($user,$resp['message'],$resp['link'],'document');
-            // }
-
-            if($resp['function'] == 'seleccionar_calculadora'){
+            if(
+                $resp['function'] == 'seleccionar_calculadora' ||
+                $resp['function'] == 'solicitar_aviso_privacidad'
+            ){
 
                 $extension = strtolower(pathinfo(parse_url($resp['link'], PHP_URL_PATH), PATHINFO_EXTENSION));
 
                 $this->messageDocumentToUser($user,$resp['message'],$resp['link'],'document',$extension);
 
+            }else if($resp['function'] == 'obtener_detalle_paquete'){
+
+                $this->messageImageToUser($user,$resp['message'],$resp['link']);
+
+            }else if($resp['function'] == 'generar_link_pago_paquete'){
+
+                // Expresión regular para eliminar ambos dominios y todo lo que 
+                // venga después hasta un espacio o fin de línea
+                $pattern = '/https:\/\/(api)?contafacil\.internow\.com\.mx\/[^\s]*/';
+
+                // Eliminar los links
+                $texto_sin_links = preg_replace($pattern, '', $resp['message']);
+
+                $link_acortado = $this->botService->getTinyUrl($resp['link']);
+
+                $resp_message = $texto_sin_links . "\n\n" . $link_acortado;
+
+                $this->messageTextToUser($user,$resp_message);
+
             }else{
                 $this->messageDocumentToUser($user,$resp['message'],$resp['link'],'document');
             }
-
-            
 
         }else{
             $this->messageTextToUser($user,$resp['message']);
@@ -503,27 +526,6 @@ class WebhooksWhatsappController extends Controller
 
     public function procesarMessagesAI($user)
     {
-
-        // if(count($user->mensajes) == 1 && $user->mensajes[0]->autor == 1){
-
-        //     // Detectar si esta saludando
-        //     // if (preg_match('/\b(?:hola|buenos días|buenas tardes|buenas noches)\b/i', $text_mensajes)) {
-        //     //     return 'Hola, ¿en qué puedo ayudarte hoy?';
-        //     // }
-        //     if (preg_match('/(?:\b|[¡!¿\s])(hola|buen[oa]s\s+(d[ií]as|tardes|noches))(?=\b|[!¡.,\s])/iu', $user->mensajes[0]->text)) {
-        //         return 'Hola, ¿en qué puedo ayudarte hoy?';
-        //     }
-
-        //     // Detectar si pregunta por habilidades
-        //     if (preg_match('/habilidad(?:es)?|qu[ée]\s+(puedes|sabes)\s+hacer|qu[ée]\s+haces/iu', $user->mensajes[0]->text)) {
-        //         return "Estas son algunas de las cosas en las que puedo ayudarte:\n\n" .
-        //             "💸 *GASTOS*\n" .
-        //             "    - Registrar gasto\n" .
-        //             "    - Ver gastos (Aquí gestionas tus gastos)\n\n" .
-        //             "Escríbeme una instrucción como: *'registrar un gasto de 200 en comida'* y me encargaré.";
-        //     }
-
-        // }
 
         $apiKey = "";
 
@@ -538,7 +540,12 @@ class WebhooksWhatsappController extends Controller
             ];
         }
 
-        $resp = $this->_messageFunctionCallingGoogleAI($apiKey, $user->mensajes);
+        if ($user->config_completed) {
+            $resp = $this->_messageFunctionCallingGoogleAI($apiKey, $user->mensajes);
+        }else{
+            $resp = $this->_messageFunctionCallingConfigGoogleAI($apiKey, $user->mensajes, $user->config);
+        }
+        
         if ($resp['status'] == 200) {
 
             // Si no hay acción
@@ -555,9 +562,21 @@ class WebhooksWhatsappController extends Controller
                 if (isset($p->functionCall)) {
 
                     $permitidas = [
-                        'crear_gasto', 'crear_ingreso', 'crear_factura', 'listar_receptores',
-                        'historial', 'obtener_eventos_fiscales', 'listar_calculadoras_fiscales',
-                        'listar_documentos_de_carpeta', 'seleccionar_calculadora'
+
+                        'solicitar_aviso_privacidad',
+                        'configurar_aviso_privacidad',
+                        'configurar_usuario', 
+                        'configurar_emisor_cfdi', 
+                        'configurar_facturacion_ingresos',
+
+                        'crear_gasto', 'crear_ingreso', 
+                        'crear_factura', 'cancelar_factura', 'listar_receptores', 'resumen_factura',
+                        'historial', 
+                        'obtener_eventos_fiscales', 
+                        'listar_calculadoras_fiscales', 'listar_documentos_de_carpeta', 'seleccionar_calculadora',
+                        'listar_paquetes_por_categoria', 'obtener_detalle_paquete', 'generar_link_pago_paquete',
+                        'obtener_resumen_financiero'
+                        
                     ];
                     
                     $call = $p->functionCall;
@@ -591,7 +610,16 @@ class WebhooksWhatsappController extends Controller
                             ]]]
                         ];
 
-                    $resp2 = $this->_messageFunctionCallingGoogleAI($apiKey, $user->mensajes, $contents2);
+                    if ($user->config_completed) {
+                        $resp2 = $this->_messageFunctionCallingGoogleAI($apiKey, $user->mensajes, $contents2);
+                    }else{
+
+                        // Obtener datos de configuración 
+                        $datos_configuracion = $this->botService->getStatusConfiguracion($user->id);
+
+                        $resp2 = $this->_messageFunctionCallingConfigGoogleAI($apiKey, $user->mensajes, $datos_configuracion['datos_recolectados'], $contents2);
+                    }
+                    
                     if ($resp2['status'] == 200) {
 
                         // Si no hay acción
@@ -669,6 +697,22 @@ class WebhooksWhatsappController extends Controller
         }
     }
 
+    public function messageImageToUser($user,$message,$link){
+        $resp = $this->_messageImageWS($user->telefono,$message,$link);
+
+        if ($resp['status'] == 200) {
+
+            $this->storeMessage($user->id,null,$message,0); //bot
+
+            return 1;
+
+        }else{
+
+            return 0;
+
+        }
+    }
+
     public function getMensajes($user_id)
     {
         $mensajes = BotMessage::select('id', 'user_id', 'text', 'autor', 'status')
@@ -684,8 +728,25 @@ class WebhooksWhatsappController extends Controller
             array_unshift($data, $mensajes[$i]);
         }
 
+        // $result = $this->botService->obtener_resumen_financiero([], $user_id);
+
+        // $receptores = null;
+
+        // $cfdi_empresa = CfdiEmpresa::
+        //     where('user_id',$user_id)
+        //     ->first();
+
+        // if ($cfdi_empresa)
+        // {
+        //     $receptores = CfdiCliente::
+        //         where('empresa_id',$cfdi_empresa->id)
+        //         ->get();
+        // }
+
         return response()->json([
-            'data'=>$data
+            'data'=>$data,
+            // 'resumen'=>$result
+            // 'receptores'=>$receptores
         ], 200);
     }
 

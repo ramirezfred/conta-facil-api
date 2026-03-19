@@ -18,7 +18,8 @@ class CfdiClientesMigration extends Migration
             $table->increments('id');
             $table->integer('user_id')->nullable();
             $table->integer('empresa_id')->nullable();
-            $table->integer('status')->nullable();
+            // $table->integer('status')->nullable();
+            $table->boolean('status')->default(true);
             $table->string('Rfc')->nullable();
             $table->string('Nombre')->nullable();
             $table->string('DomicilioFiscalReceptor')->nullable();
@@ -27,6 +28,17 @@ class CfdiClientesMigration extends Migration
             $table->string('RegimenFiscalReceptor')->nullable();
             $table->string('UsoCFDI')->nullable();
             $table->string('Email')->nullable();
+
+            // Campos nuevos para CRM y POS
+            $table->boolean('status')->default(true); //actualizado para manejarlo como boolean
+            $table->string('telefono', 30)->nullable();
+            $table->text('direccion')->nullable();
+            $table->string('tipo_entidad')->default('cliente'); //'cliente', 'proveedor', 'ambos'
+            $table->string('tipo_cliente')->default('prospecto')->nullable(); //'prospecto', 'cliente'
+            $table->string('origen')->default('crm'); //'crm', 'pos', 'erp', 'cfdi', 'api'
+            $table->string('tipo_operacion')->nullable(); //para proveedores
+            $table->boolean('eliminado')->default(false);
+
             $table->timestamps();
         });
     }

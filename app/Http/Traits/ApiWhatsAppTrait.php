@@ -4,6 +4,9 @@ namespace App\Http\Traits;
 
 use Illuminate\Http\Request;
 
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+
 use App\Http\Requests;
 
 use App\Models\Bot;
@@ -229,110 +232,102 @@ trait ApiWhatsAppTrait
 
     // }
 
-    // public static function _messageImage($bot_id, $to, $body)
-    // {
-    //     set_time_limit(500);
+    public static function _messageImageWS($to, $body, $link)
+    {
+        set_time_limit(500);
 
-    //     $bot = Bot::find($bot_id);
-    //     if (!$bot)
-    //     {
-    //         // Devolvemos error codigo http 404
-    //         return [
-    //             'status'=>404,
-    //             'error'=>'No existe el bot con id '.$bot_id,
-    //             'whatsapp'=>null
-    //         ];
-    //     }
+        $bot = Bot::find(1);
+        if (!$bot)
+        {
+            // Devolvemos error codigo http 404
+            return [
+                'status'=>404,
+                'error'=>'Bot no encontrado.',
+                'whatsapp'=>null
+            ];
+        }
 
-    //     if ($bot->status != 1)
-    //     {
-    //         // Devolvemos error codigo http 409
-    //         return [
-    //             'status'=>409,
-    //             'error'=>'Bot inactivo',
-    //             'whatsapp'=>null
-    //         ];
-    //     }
+        $rest = substr($to, 0, 3);
+        if($rest == 521){
+            $to = str_replace("521", "52", $to);
+        }
 
-    //     $rest = substr($to, 0, 3);
-    //     if($rest == 521){
-    //         $to = str_replace("521", "52", $to);
-    //     }
-
-    //     //Armando la peticion cURL        
-    //     $fields = array(
-    //         'messaging_product' => 'whatsapp',
-    //         'recipient_type' => 'individual',
-    //         'type'=> 'image',
-    //         'to' => '+'.$to,
-    //         //'to' => $to,
-    //         'image' => array(
-    //             'link' => $body
-    //         )
-    //     ); 
+        //Armando la peticion cURL        
+        $fields = array(
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'type'=> 'image',
+            'to' => '+'.$to,
+            //'to' => $to,
+            'image' => array(
+                'link' => $link,
+                'caption' => $body
+            )
+        ); 
 
             
-    //     $fields = json_encode($fields);
-    //     /* print("\nJSON sent:\n");
-    //     print($fields); */
+        $fields = json_encode($fields);
+        /* print("\nJSON sent:\n");
+        print($fields); */
 
-    //     $claveAdicional = config('app.lada_b');
-    //     $cadenaDesencriptada = Crypt::decrypt($bot->access_token, $claveAdicional);
-    //     $cadenaDesencriptada = substr($cadenaDesencriptada, 0, -5);
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, static::$base_url_whatsapp.static::$path_whatsapp."/".$bot->number_id."/messages");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            "Authorization: Bearer ".$bot->access_token,
+            "Content-Type: application/json"
+        ));
 
-    //     $ch = curl_init();
-    //     curl_setopt($ch, CURLOPT_URL, static::$base_url_whatsapp.static::$path_whatsapp."/".$bot->number_id."/messages");
-    //     curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-    //         "Authorization: Bearer ".$cadenaDesencriptada,
-    //         "Content-Type: application/json"
-    //     ));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+        curl_setopt($ch, CURLOPT_HEADER, FALSE);
+        curl_setopt($ch, CURLOPT_POST, TRUE);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
 
-    //     curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
-    //     curl_setopt($ch, CURLOPT_HEADER, FALSE);
-    //     curl_setopt($ch, CURLOPT_POST, TRUE);
-    //     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    //     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+        $response = curl_exec($ch);
+        $err = curl_error($ch);
 
-    //     $response = curl_exec($ch);
-    //     $err = curl_error($ch);
+        curl_close($ch);
 
-    //     curl_close($ch);
+        if ($err) {
 
-    //     if ($err) {
-    //         //echo "cURL Error #:" . $err;
-    //         return [
-    //             'status'=>409,
-    //             'error'=>'Error al conectar con WhatsApp',
-    //             'whatsapp'=>$err
-    //         ];
+            file_put_contents('webhook_log.txt', print_r($err, true), FILE_APPEND);
 
-    //     } else {
+            //echo "cURL Error #:" . $err;
+            return [
+                'status'=>409,
+                'error'=>'Error al conectar con WhatsApp',
+                'whatsapp'=>$err
+            ];
 
-    //         $whatsapp_obj = json_decode($response);
+        } else {
 
-    //         return [
-    //             'status'=>200,
-    //             'whatsapp'=>$whatsapp_obj
-    //         ];
+            $whatsapp_obj = json_decode($response);
 
-    //         if (property_exists($whatsapp_obj, 'messages')) {
+            file_put_contents('webhook_log.txt', print_r($whatsapp_obj, true), FILE_APPEND);
 
-    //             return [
-    //                 'status'=>200,
-    //                 'whatsapp'=>$whatsapp_obj
-    //             ]; 
+            return [
+                'status'=>200,
+                'whatsapp'=>$whatsapp_obj
+            ];
 
-    //         }else{
-    //             return [
-    //                 'status'=>409,
-    //                 'error'=>'Error al enviar mensaje',
-    //                 'whatsapp'=>$whatsapp_obj
-    //             ];
-    //         }
+            if (property_exists($whatsapp_obj, 'messages')) {
 
-    //     }  
+                return [
+                    'status'=>200,
+                    'whatsapp'=>$whatsapp_obj
+                ]; 
 
-    // }
+            }else{
+                return [
+                    'status'=>409,
+                    'error'=>'Error al enviar mensaje',
+                    'whatsapp'=>$whatsapp_obj
+                ];
+            }
+
+        }  
+
+    }
 
     public static function _messageDocumentWS($to, $body, $link, $reference, $ext='pdf')
     {
@@ -667,5 +662,200 @@ trait ApiWhatsAppTrait
     //     }  
 
     // }
+
+    public static function _readConfirmationWS($WHATSAPP_MESSAGE_ID)
+    {
+        set_time_limit(500);
+
+        $bot = Bot::find(1);
+        if (!$bot)
+        {
+            // Devolvemos error codigo http 404
+            return [
+                'status'=>404,
+                'error'=>'Bot no encontrado.',
+                'whatsapp'=>null
+            ];
+        }
+
+        //Armando la peticion cURL        
+        $fields = array(
+            'messaging_product' => 'whatsapp',
+            'status' => 'read',
+            'message_id'=> $WHATSAPP_MESSAGE_ID,
+        ); 
+
+            
+        $fields = json_encode($fields);
+        /* print("\nJSON sent:\n");
+        print($fields); */
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, static::$base_url_whatsapp.static::$path_whatsapp."/".$bot->number_id."/messages");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            "Authorization: Bearer ".$bot->access_token,
+            "Content-Type: application/json"
+        ));
+
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+        curl_setopt($ch, CURLOPT_HEADER, FALSE);
+        curl_setopt($ch, CURLOPT_POST, TRUE);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+
+        $response = curl_exec($ch);
+        $err = curl_error($ch);
+
+        curl_close($ch);
+
+        if ($err) {
+
+            // file_put_contents('webhook_log.txt', print_r($err, true), FILE_APPEND);
+
+            //echo "cURL Error #:" . $err;
+            return [
+                'status'=>409,
+                'error'=>'Error al conectar con WhatsApp',
+                'whatsapp'=>$err
+            ];
+
+        } else {
+
+            $whatsapp_obj = json_decode($response);
+
+            // file_put_contents('webhook_log.txt', print_r($whatsapp_obj, true), FILE_APPEND);
+
+            return [
+                'status'=>200,
+                'whatsapp'=>$whatsapp_obj
+            ];
+
+        }  
+
+    }
+
+    public static function _typingIndicatorWS($WHATSAPP_MESSAGE_ID)
+    {
+        set_time_limit(500);
+
+        $bot = Bot::find(1);
+        if (!$bot)
+        {
+            // Devolvemos error codigo http 404
+            return [
+                'status'=>404,
+                'error'=>'Bot no encontrado.',
+                'whatsapp'=>null
+            ];
+        }
+
+        //Armando la peticion cURL        
+        $fields = array(
+            'messaging_product' => 'whatsapp',
+            'status' => 'read',
+            'message_id'=> $WHATSAPP_MESSAGE_ID,
+            'typing_indicator' => array(
+                'type' => 'text'
+            )
+        ); 
+
+            
+        $fields = json_encode($fields);
+        /* print("\nJSON sent:\n");
+        print($fields); */
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, static::$base_url_whatsapp.static::$path_whatsapp."/".$bot->number_id."/messages");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            "Authorization: Bearer ".$bot->access_token,
+            "Content-Type: application/json"
+        ));
+
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+        curl_setopt($ch, CURLOPT_HEADER, FALSE);
+        curl_setopt($ch, CURLOPT_POST, TRUE);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);
+
+        $response = curl_exec($ch);
+        $err = curl_error($ch);
+
+        curl_close($ch);
+
+        if ($err) {
+
+            // file_put_contents('webhook_log.txt', print_r($err, true), FILE_APPEND);
+
+            //echo "cURL Error #:" . $err;
+            return [
+                'status'=>409,
+                'error'=>'Error al conectar con WhatsApp',
+                'whatsapp'=>$err
+            ];
+
+        } else {
+
+            $whatsapp_obj = json_decode($response);
+
+            // file_put_contents('webhook_log.txt', print_r($whatsapp_obj, true), FILE_APPEND);
+
+            return [
+                'status'=>200,
+                'whatsapp'=>$whatsapp_obj
+            ];
+
+        }  
+
+    }
+
+    public static function _downloadWhatsAppMediaWS($mediaId, $fileName) {
+
+        set_time_limit(500);
+
+        $bot = Bot::find(1);
+        if (!$bot)
+        {
+            // Devolvemos error codigo http 404
+            return [
+                'status'=>404,
+                'error'=>'Bot no encontrado.',
+                'whatsapp'=>null
+            ];
+        }
+
+        $token = $bot->access_token; // Tu token del Cloud API
+        $phoneId = $bot->number_id; // Tu ID del número
+
+        // Paso 1: obtener la URL del archivo
+        $response = Http::withToken($token)->get("https://graph.facebook.com/v21.0/{$mediaId}");
+        
+        if ($response->failed()) {
+            // \Log::error("Error obteniendo metadata del archivo: ".$response->body());
+            $err = "Error obteniendo metadata del archivo: ".$response->body();
+            file_put_contents('webhook_log.txt', print_r($err, true), FILE_APPEND);
+            // return false;
+            return "Error obteniendo metadata del archivo";
+        }
+
+        $mediaUrl = $response->json()['url'];
+
+        // Paso 2: descargar el archivo real
+        $fileResponse = Http::withToken($token)->get($mediaUrl);
+
+        if ($fileResponse->successful()) {
+            Storage::put("whatsapp/{$fileName}", $fileResponse->body());
+            // \Log::info("Archivo guardado en: storage/app/whatsapp/{$fileName}");
+            $err = "Archivo guardado en: storage/app/whatsapp/{$fileName}";
+            file_put_contents('webhook_log.txt', print_r($err, true), FILE_APPEND);
+            // return true;
+            return "storage/app/whatsapp/{$fileName}";
+        } else {
+            // \Log::error("Error descargando archivo: ".$fileResponse->body());
+            $err = "Error descargando archivo: ".$fileResponse->body();
+            file_put_contents('webhook_log.txt', print_r($err, true), FILE_APPEND);
+            // return false;
+            return "Error descargando archivo";
+        }
+    }
 
 }

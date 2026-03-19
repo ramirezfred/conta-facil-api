@@ -32,10 +32,10 @@ class CompraController extends Controller
     //produccion conekta
     //public $conekta_key_privada = "key_2iNIGX3sxbxlikaDAnYJMPE";
     //conekta_key_publica = key_anCayuKKnrhk9wUX40aLm7F
-    public $conekta_key_privada = "key_yauwrnENPEy8RolXswmAXlf";
+    // public $conekta_key_privada = "key_yauwrnENPEy8RolXswmAXlf";
 
     //pruebas conekta
-    // public $conekta_key_privada = "key_LtGFYFRqrKrYchrXBRHVdA";
+    public $conekta_key_privada = "key_LtGFYFRqrKrYchrXBRHVdA";
 
     //produccion paypal
     //client id : AQvwFtJTdPAiAOXzaoFBI01vKlKLi8qtG84mGzNDr0sC2ck2TraCCVLhhUvt3wd66bxuOqn6rDlHnytO

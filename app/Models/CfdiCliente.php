@@ -34,21 +34,27 @@ class CfdiCliente extends Model
         'Rfc',
         'Nombre',
         'DomicilioFiscalReceptor',
-        'ResidenciaFiscal',
-        'NumRegIdTrib',
+        // 'ResidenciaFiscal',
+        // 'NumRegIdTrib',
         'RegimenFiscalReceptor',
         'UsoCFDI',
+        'contacto',
         'Email',
+        'telefono',
+        'direccion',
+        'tipo_entidad', //'cliente', 'proveedor', 'ambos'
+        'tipo_cliente', //'prospecto', 'cliente'
+        'origen', //'crm', 'pos', 'erp', 'cfdi', 'api'
+        'tipo_operacion', //para proveedores
+        'eliminado',
     ];
-
-    //dalle bandera para controlar si esta activa la generacion de imagenes con dalle
 
     /**
      * The attributes excluded from the model's JSON form.
      *
      * @var array
      */
-    protected $hidden = ['created_at','updated_at'];
+    protected $hidden = ['updated_at'];
 
     /**
      * The attributes that should be cast to native types.
@@ -56,12 +62,15 @@ class CfdiCliente extends Model
      * @var array
      */
     protected $casts = [
-        'created_at' => 'datetime:Y-m-d H:i:s',
-        'updated_at' => 'datetime:Y-m-d H:i:s',
+        // 'created_at' => 'datetime:Y-m-d H:i:s',
+        // 'updated_at' => 'datetime:Y-m-d H:i:s',
         'user_id' => 'integer',
         'empresa_id' => 'integer',
-        'status' => 'integer',
+        'status' => 'boolean',
+        'eliminado' => 'boolean',
     ];
+
+    // --- Relaciones ---
 
     public function empresa()
     {
@@ -76,6 +85,61 @@ class CfdiCliente extends Model
     public function mi_uso_cfdi()
     {
         return $this->belongsTo(Cfdi40UsoCfdi::class, 'UsoCFDI');
+    }    
+
+    // Relación con oportunidades (CRM)
+    public function oportunidades()
+    {
+        return $this->hasMany(CrmOportunidad::class, 'cliente_id');
+    }
+
+    // public function compras()
+    // {
+    //     return $this->hasMany(ErpCompra::class, 'proveedor_id');
+    // }
+
+    // public function ventas()
+    // {
+    //     return $this->hasMany(CfdiComprobante::class, 'cliente_id');
+    // }
+
+    // --- Scopes ---
+    public function scopeActivos($query)
+    {
+        return $query->where('status', true)->where('eliminado', false);
+    }
+
+    public function scopeNoEliminados($query)
+    {
+        return $query->where('eliminado', false);
+    }
+
+    public function scopeClientes($q) {
+        return $q->where('tipo_cliente', 'cliente');
+    }
+
+    public function scopeProspectos($q) {
+        return $q->where('tipo_cliente', 'prospecto');
+    }
+
+    public function scopeActivosNoEliminados($query)
+    {
+        return $query->where('status', true)
+                    ->where('eliminado', false);
+    }
+
+    // --- Helpers ---
+    public static function existeDuplicado($campo, $valor, $user_id, $idExcluir = null)
+    {
+        $query = self::noEliminados()
+            ->where($campo, $valor)
+            ->where('user_id', $user_id);
+
+        if ($idExcluir) {
+            $query->where('id', '<>', $idExcluir);
+        }
+
+        return $query->exists();
     }
 
 }

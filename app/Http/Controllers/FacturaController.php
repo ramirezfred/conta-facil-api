@@ -41,6 +41,9 @@ use App\Models\Ingreso;
 use App\Models\IngresoConcepto;
 use App\Models\Producto;
 
+use App\Models\PosOrder;
+use App\Models\PosOrderDetail;
+
 //use Hash;
 use DB;
 //use Validator;
@@ -52,6 +55,8 @@ use Session;
 use Redirect;
 use Swift_SmtpTransport;
 use Swift_Mailer;
+
+use App\Services\InventoryService;
 
 //ejemplo factura cfdi 4.0
 // Se desactivan los mensajes de debug
@@ -596,8 +601,8 @@ class FacturaController extends Controller
                 $factura->conceptos[$i]->ObjetoImp = 'Si obj de impuesto.';
                 $Base = $factura->conceptos[$i]->Importe - $factura->conceptos[$i]->Descuento;
 
-                $Importe = number_format(($Base * 0.16), 2, '.', '');
-                $TotalImpuestosTrasladados = $TotalImpuestosTrasladados + $Importe;
+                $Importe = round($Base * 0.16, 4);
+                $TotalImpuestosTrasladados += $Importe;
 
                 $resul = (object) [
                     'Impuesto' => "IVA",
@@ -611,8 +616,7 @@ class FacturaController extends Controller
 
                 if($factura->conceptos[$i]->ObjetoImpRet == 1){
 
-                    $retencionIva = $Base * ($factura->TasaIva/100);
-                    $retencionIva = number_format(($retencionIva), 2, '.', '');
+                    $retencionIva = round($Base * ($factura->TasaIva / 100), 4);
                     $resul = (object) [
                         'Impuesto' => "IVA",
                         'Tipo' => "Retención",
@@ -623,8 +627,7 @@ class FacturaController extends Controller
                     ];
                     array_push($Impuestos,$resul);
 
-                    $retencionIsr = $Base * ($factura->TasaIsr/100);
-                    $retencionIsr = number_format(($retencionIsr), 2, '.', '');
+                    $retencionIsr = round($Base * ($factura->TasaIsr / 100), 4);
                     $resul = (object) [
                         'Impuesto' => "ISR",
                         'Tipo' => "Retención",
@@ -635,21 +638,21 @@ class FacturaController extends Controller
                     ];
                     array_push($Impuestos,$resul);
 
-                    $TotalImpuestosRetenidosIva = $TotalImpuestosRetenidosIva + $retencionIva;
-                    $TotalImpuestosRetenidosIsr = $TotalImpuestosRetenidosIsr + $retencionIsr;
-                    $TotalImpuestosRetenidos = $TotalImpuestosRetenidos + $TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr;
+                    $TotalImpuestosRetenidosIva += $retencionIva;
+                    $TotalImpuestosRetenidosIsr += $retencionIsr;
 
                 }
 
                 $factura->conceptos[$i]->Impuestos = $Impuestos;
 
-
             }
         }
-        $factura->TotalImpuestosTrasladados = number_format($TotalImpuestosTrasladados, 2, '.', '');
-        $factura->TotalImpuestosRetenidos = number_format($TotalImpuestosRetenidos, 2, '.', '');
-        $factura->TotalImpuestosRetenidosIva = number_format($TotalImpuestosRetenidosIva, 2, '.', '');
-        $factura->TotalImpuestosRetenidosIsr = number_format($TotalImpuestosRetenidosIsr, 2, '.', '');
+
+        $TotalImpuestosRetenidos = round($TotalImpuestosRetenidosIva, 2) + round($TotalImpuestosRetenidosIsr, 2);
+        $factura->TotalImpuestosTrasladados = round($TotalImpuestosTrasladados, 2);
+        $factura->TotalImpuestosRetenidos = round($TotalImpuestosRetenidos, 2);
+        $factura->TotalImpuestosRetenidosIva = round($TotalImpuestosRetenidosIva, 2);
+        $factura->TotalImpuestosRetenidosIsr = round($TotalImpuestosRetenidosIsr, 2);
 
         $emisor = CfdiEmpresa::
             with('mi_regimen_fiscal')
@@ -859,16 +862,15 @@ class FacturaController extends Controller
         return response()->json(['catalogoClaveUnidad'=>$objs], 200);
     }
 
-    
-
     public function getClientesPorRfc(Request $request)
     {
         $termino = $request->input('termino');
         $empresa_id = $request->input('empresa_id');
 
-        $objs = CfdiCliente::
-            where("empresa_id", $empresa_id)
+        $objs = CfdiCliente::activos()
+            ->where("empresa_id", $empresa_id)
             ->where("Rfc", "like", '%'.$termino.'%')
+            ->whereIn("tipo_entidad", ["cliente", "ambos"])
             ->with('mi_regimen_fiscal')
             ->with('mi_uso_cfdi')
             ->get();
@@ -880,8 +882,9 @@ class FacturaController extends Controller
     {
         $empresa_id = $request->input('empresa_id');
 
-        $objs = CfdiCliente::
-            where("empresa_id", $empresa_id)
+        $objs = CfdiCliente::activos()
+            ->where("empresa_id", $empresa_id)
+            ->whereIn("tipo_entidad", ["cliente", "ambos"])
             ->with('mi_regimen_fiscal')
             ->with('mi_uso_cfdi')
             ->get();
@@ -1016,11 +1019,18 @@ class FacturaController extends Controller
         } 
 
         //Iniciar proceso de facturacion
-        $Folio = (CfdiComprobante::count())+1;
+        // $Folio = (CfdiComprobante::count())+1;
 
-        $Serie = (CfdiComprobante::
+        // $Serie = (CfdiComprobante::
+        //     where('emisor_id',$empresa->id)
+        //     ->count())+1;
+
+        $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->count())+1;
+
+        $Folio = strtoupper("F0".$cliente->id."0".$empresa->id."0".$contador);
+        $Serie = strtoupper("A0".$cliente->id."0".$empresa->id."0".$contador);
 
         //crear un pedido nuevo en curso
         $pedidoCurso=CfdiComprobante::create([
@@ -1028,8 +1038,10 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            'Serie'=>"S-".$empresa->id."-".$Serie,
-            'Folio'=>"F-".$empresa->id."-".$Folio,
+            // 'Serie'=>"S-".$empresa->id."-".$Serie,
+            // 'Folio'=>"F-".$empresa->id."-".$Folio,
+            'Serie'=>$Serie,
+            'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
             'Sello'=>"",
             'FormaPago'=>$request->input('FormaPago'),
@@ -1065,78 +1077,6 @@ class FacturaController extends Controller
             'UsoCFDI'=>$request->input('UsoCFDI'),
             'Email'=>$request->input('Email'),
         ]);
-
-        // //crear cliente asociado al emisor
-        // if($request->input('flag_cliente') == 2){
-
-
-        //     $clienteExiste = CfdiCliente::
-        //         where('empresa_id',$empresa_id)
-        //         ->where('status', 1)
-        //         ->where('Rfc', $request->input('Rfc'))
-        //         ->with('mi_regimen_fiscal')
-        //         ->with('mi_uso_cfdi')
-        //         ->first();
-
-        //     if(!$clienteExiste){
-        //         $newCliente=CfdiCliente::create([
-        //             'empresa_id'=>$empresa_id,
-        //             'status'=>1,
-        //             'Rfc'=>$request->input('Rfc'),
-        //             'Nombre'=>$request->input('Nombre'),
-        //             'DomicilioFiscalReceptor'=>$request->input('DomicilioFiscalReceptor'),
-        //             'ResidenciaFiscal'=>null,
-        //             'NumRegIdTrib'=>null,
-        //             'RegimenFiscalReceptor'=>$request->input('RegimenFiscalReceptor'),
-        //             'UsoCFDI'=>$request->input('UsoCFDI'),
-        //             'Email'=>$request->input('Email'),
-        //         ]);
-        //     }
-
-            
-        // }
-
-        // //actualizar cliente asociado del emisor
-        // if($request->input('flag_cliente') == 1){
-
-        //     if($request->input('cliente_id') != null && $request->input('cliente_id') != ''){
-
-        //         $clienteReceptor = CfdiCliente::
-        //             where('empresa_id',$empresa_id)
-        //             ->where('status', 1)
-        //             ->where('id', $request->input('cliente_id'))
-        //             ->with('mi_regimen_fiscal')
-        //             ->with('mi_uso_cfdi')
-        //             ->first();
-
-        //         if($clienteReceptor){
-
-        //             $clienteReceptor->Nombre = $request->input('Nombre');
-        //             $clienteReceptor->DomicilioFiscalReceptor = $request->input('DomicilioFiscalReceptor');
-        //             $clienteReceptor->RegimenFiscalReceptor = $request->input('RegimenFiscalReceptor');
-        //             $clienteReceptor->UsoCFDI = $request->input('UsoCFDI');
-        //             $clienteReceptor->Email = $request->input('Email');
-        //             $clienteReceptor->save();
-
-        //             $clienteExiste = CfdiCliente::
-        //                 where('empresa_id',$empresa_id)
-        //                 ->where('status', 1)
-        //                 ->where('id', '<>', $request->input('cliente_id'))
-        //                 ->where('Rfc', $request->input('Rfc'))
-        //                 ->with('mi_regimen_fiscal')
-        //                 ->with('mi_uso_cfdi')
-        //                 ->first();
-
-        //             if(!$clienteExiste){
-        //                 $clienteReceptor->Rfc = $request->input('Rfc');
-        //                 $clienteReceptor->save();
-        //             }
-
-                    
-        //         }
-
-        //     }
-        // }
 
         //Crear los conceptos
         for ($i=0; $i < count($conceptos); $i++) { 
@@ -1225,9 +1165,8 @@ class FacturaController extends Controller
 
 
             //crear o actualizar cliente
-            $clienteExiste = CfdiCliente::
-                where('empresa_id',$empresa_id)
-                ->where('status', 1)
+            $clienteExiste = CfdiCliente::noEliminados()
+                ->where('empresa_id',$empresa_id)
                 ->where('Rfc', $request->input('Rfc'))
                 ->with('mi_regimen_fiscal')
                 ->with('mi_uso_cfdi')
@@ -1236,7 +1175,7 @@ class FacturaController extends Controller
             if(!$clienteExiste){
                 $newCliente=CfdiCliente::create([
                     'empresa_id'=>$empresa_id,
-                    'status'=>1,
+                    'status'=>true,
                     'Rfc'=>$request->input('Rfc'),
                     'Nombre'=>$request->input('Nombre'),
                     'DomicilioFiscalReceptor'=>$request->input('DomicilioFiscalReceptor'),
@@ -1245,6 +1184,8 @@ class FacturaController extends Controller
                     'RegimenFiscalReceptor'=>$request->input('RegimenFiscalReceptor'),
                     'UsoCFDI'=>$request->input('UsoCFDI'),
                     'Email'=>$request->input('Email'),
+                    'user_id'=>$empresa->user_id,
+                    'origen'=>'cfdi',
                 ]);
             }else if($clienteExiste){
                 $clienteExiste->Nombre = $request->input('Nombre');
@@ -1405,11 +1346,18 @@ class FacturaController extends Controller
         } 
 
         //Iniciar proceso de facturacion
-        $Folio = (CfdiComprobante::count())+1;
+        // $Folio = (CfdiComprobante::count())+1;
 
-        $Serie = (CfdiComprobante::
+        // $Serie = (CfdiComprobante::
+        //     where('emisor_id',$empresa->id)
+        //     ->count())+1;
+
+        $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->count())+1;
+
+        $Folio = strtoupper("F0".$cliente->id."0".$empresa->id."0".$contador);
+        $Serie = strtoupper("A0".$cliente->id."0".$empresa->id."0".$contador);
 
         //crear un pedido nuevo en curso
         $pedidoCurso=CfdiComprobante::create([
@@ -1417,8 +1365,10 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            'Serie'=>"S-".$empresa->id."-".$Serie,
-            'Folio'=>"F-".$empresa->id."-".$Folio,
+            // 'Serie'=>"S-".$empresa->id."-".$Serie,
+            // 'Folio'=>"F-".$empresa->id."-".$Folio,
+            'Serie'=>$Serie,
+            'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
             'Sello'=>"",
             'FormaPago'=>$request->input('FormaPago'),
@@ -1542,9 +1492,8 @@ class FacturaController extends Controller
 
 
             //crear o actualizar cliente
-            $clienteExiste = CfdiCliente::
-                where('empresa_id',$empresa_id)
-                ->where('status', 1)
+            $clienteExiste = CfdiCliente::noEliminados()
+                ->where('empresa_id',$empresa_id)
                 ->where('Rfc', $request->input('Rfc'))
                 ->with('mi_regimen_fiscal')
                 ->with('mi_uso_cfdi')
@@ -1553,7 +1502,7 @@ class FacturaController extends Controller
             if(!$clienteExiste){
                 $newCliente=CfdiCliente::create([
                     'empresa_id'=>$empresa_id,
-                    'status'=>1,
+                    'status'=>true,
                     'Rfc'=>$request->input('Rfc'),
                     'Nombre'=>$request->input('Nombre'),
                     'DomicilioFiscalReceptor'=>$request->input('DomicilioFiscalReceptor'),
@@ -1562,6 +1511,7 @@ class FacturaController extends Controller
                     'RegimenFiscalReceptor'=>$request->input('RegimenFiscalReceptor'),
                     'UsoCFDI'=>$request->input('UsoCFDI'),
                     'Email'=>$request->input('Email'),
+                    'user_id'=>$empresa->user_id,
                 ]);
             }else if($clienteExiste){
                 $clienteExiste->Nombre = $request->input('Nombre');
@@ -1644,14 +1594,16 @@ class FacturaController extends Controller
         $datos['xml_debug']='sdk2/timbrados/sin_timbrar_ejemplo_factura4.xml';
 
         // Credenciales de Timbrado
-        // $datos['PAC']['usuario'] = 'DEMO700101XXX';
-        // $datos['PAC']['pass'] = 'DEMO700101XXX';
-        // $datos['PAC']['produccion'] = 'NO';
-
-        $datos['PAC']['usuario'] = 'AUMA9101171B4';
-        $datos['PAC']['pass'] = 'AUMA9101171B41234';
-        $datos['PAC']['produccion'] = 'SI';
-
+        if($emisor->user_id == 6){
+            $datos['PAC']['usuario'] = 'DEMO700101XXX';
+            $datos['PAC']['pass'] = 'DEMO700101XXX';
+            $datos['PAC']['produccion'] = 'NO';
+        }else{
+            $datos['PAC']['usuario'] = 'AUMA9101171B4';
+            $datos['PAC']['pass'] = 'AUMA9101171B41234';
+            $datos['PAC']['produccion'] = 'SI';
+        }
+        
         // Rutas y clave de los CSD
         $datos['conf']['cer'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor->cer);
         $datos['conf']['key'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor->key);
@@ -1665,15 +1617,6 @@ class FacturaController extends Controller
         $datos['conf']['pass'] = $cadenaDesencriptada;
 
         // Datos de la Factura
-        if($factura->Descuento > 0){
-            $datos['factura']['descuento'] = $factura->Descuento;
-        }
-        
-        //$datos['factura']['fecha_expedicion'] = $factura->Fecha;
-        //$datos['factura']['fecha_expedicion'] = date('Y-m-d\TH:i:s', time() - (60*60));
-        //$datos['factura']['fecha_expedicion'] = date('Y-m-d\TH:i:s', time() - 240);
-        //$datos['factura']['fecha_expedicion'] = "2024-05-10T13:21:24";
-
         $fechaActual = date('Y-m-d\TH:i:s'); // Obtener la fecha y hora actual en formato ISO 8601
         // Restar dos horas a la fecha actual
         $dosHorasAtras = strtotime($fechaActual) - 7200; // Restar 7200 segundos (2 horas)
@@ -1693,29 +1636,20 @@ class FacturaController extends Controller
         $datos['factura']['metodo_pago'] = $factura->mi_metodo_pago->id;
         $datos['factura']['moneda'] = 'MXN';
         $datos['factura']['serie'] = $factura->Serie;
-        $datos['factura']['subtotal'] = $factura->Subtotal;
         //$datos['factura']['tipocambio'] = 1;
         $datos['factura']['tipocomprobante'] = 'I';
-        $datos['factura']['total'] = $factura->Total;
         ////$datos['factura']['RegimenFiscal'] = '601';
         $datos['factura']['Exportacion'] = '01';
 
 
         // Datos del Emisor
         $datos['emisor']['rfc'] = $emisor->Rfc;
-        //$datos['emisor']['rfc'] = utf8_encode($emisor->Rfc);
         $datos['emisor']['nombre'] = $emisor->RazonSocial;
-        //$datos['emisor']['nombre'] = utf8_encode($emisor->RazonSocial);
-        //$datos['emisor']['nombre'] = iconv('UTF-8', 'ISO-8859-1',$emisor->RazonSocial);
-         
         $datos['emisor']['RegimenFiscal'] = $emisor->RegimenFiscal;
-        //$datos['emisor']['FacAtrAdquirente'] = 'ACCEM SERVICIOS EMPRESARIALES SC';
 
         // Datos del Receptor
         $datos['receptor']['rfc'] = $factura->receptor->Rfc;
-        //$datos['receptor']['nombre'] = utf8_encode($factura->receptor->Nombre);
         $datos['receptor']['nombre'] = $factura->receptor->Nombre;
-
         $datos['receptor']['UsoCFDI'] = $factura->receptor->mi_uso_cfdi->id;
         //opcional
         if($factura->receptor->Rfc == "XAXX010101000"){
@@ -1737,114 +1671,118 @@ class FacturaController extends Controller
             $datos['InformacionGlobal']['Año'] = date("Y");
         }
 
+        // Inicializar totales
         $TotalImpuestosTrasladados = 0;
         $TotalImpuestosRetenidos = 0;
         $TotalImpuestosRetenidosIva = 0;
         $TotalImpuestosRetenidosIsr = 0;
-
-        $BaseTraslados = 0;
-        $BaseRetenciones = 0;
+        $totalDescuentos = 0;
+        $subtotal = 0;
 
         // Se agregan los conceptos
         for ($i=0; $i < count($factura->conceptos); $i++) { 
-            $datos['conceptos'][$i]['cantidad'] = $factura->conceptos[$i]->Cantidad;
-            $datos['conceptos'][$i]['unidad'] = $factura->conceptos[$i]->Unidad;
-            //$datos['conceptos'][$i]['ID'] = "1726";
-            
-            //$datos['conceptos'][$i]['descripcion'] = utf8_encode($factura->conceptos[$i]->Descripcion);
-            $datos['conceptos'][$i]['descripcion'] = $factura->conceptos[$i]->Descripcion;
-            $datos['conceptos'][$i]['valorunitario'] = $factura->conceptos[$i]->ValorUnitario;
-            $datos['conceptos'][$i]['importe'] = $factura->conceptos[$i]->Importe;
+            $concepto = $factura->conceptos[$i];
 
-            if($factura->conceptos[$i]->Descuento > 0){
-                $datos['conceptos'][0]['Descuento'] = $factura->conceptos[$i]->Descuento;
+            // Usamos 4 decimales como lo indicaste
+            $cantidad = round($concepto->Cantidad, 4);
+            $valorUnitario = round($concepto->ValorUnitario, 4);
+            $importeConcepto = round($cantidad * $valorUnitario, 4);
+
+            //Neta
+            if($factura->tipo == 1){
+                $importeConcepto = round($importeConcepto / 1.16, 4);
             }
 
-            $datos['conceptos'][$i]['ClaveProdServ'] = $factura->conceptos[$i]->mi_clave_prod_serv->id;
-            $datos['conceptos'][$i]['ClaveUnidad'] = $factura->conceptos[$i]->mi_clave_unidad->id;
+            $descuentoConcepto = round($concepto->Descuento, 4);
 
-            $datos['conceptos'][$i]['ObjetoImp'] = '01'; //no
+            $datos['conceptos'][$i]['cantidad'] = $cantidad;
+            $datos['conceptos'][$i]['unidad'] = $concepto->Unidad;
+            $datos['conceptos'][$i]['descripcion'] = $concepto->Descripcion;
+            $datos['conceptos'][$i]['valorunitario'] = $valorUnitario;
+            $datos['conceptos'][$i]['importe'] = $importeConcepto;
+            
+            if ($descuentoConcepto > 0) {
+                $datos['conceptos'][$i]['Descuento'] = $descuentoConcepto;
+                $totalDescuentos += $descuentoConcepto;
+            }
 
-            if($factura->conceptos[$i]->ObjetoImp == 1){
-                $datos['conceptos'][$i]['ObjetoImp'] = '02'; //si
+            $datos['conceptos'][$i]['ClaveProdServ'] = $concepto->mi_clave_prod_serv->id;
+            $datos['conceptos'][$i]['ClaveUnidad'] = $concepto->mi_clave_unidad->id;
 
-                $Base = $factura->conceptos[$i]->Importe - $factura->conceptos[$i]->Descuento;
-                $BaseTraslados = $BaseTraslados + $Base;
+            // La Base del cálculo del impuesto es el importe del concepto menos su descuento.
+            $Base = $importeConcepto - $descuentoConcepto;
+            $subtotal += $importeConcepto;
 
-                $Importe = number_format(($Base * 0.16), 2, '.', '');
-                $TotalImpuestosTrasladados = $TotalImpuestosTrasladados + $Importe;
+            if ($concepto->ObjetoImp == 1) {
+                $datos['conceptos'][$i]['ObjetoImp'] = '02'; // Sí objeto de impuesto
 
-                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Base'] = $Base;
-                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Impuesto'] = '002';
+                // Cálculo y redondeo del IVA
+                $ImporteIVA = round($Base * 0.16, 4);
+                $TotalImpuestosTrasladados += $ImporteIVA;
+
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Base'] = round($Base, 4);
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Impuesto'] = '002'; // IVA
                 $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TipoFactor'] = 'Tasa';
                 $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TasaOCuota'] = '0.160000';
-                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Importe'] = $Importe;
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Importe'] = $ImporteIVA;
+                
+                // Lógica para las retenciones
+                if ($concepto->ObjetoImpRet == 1) {
+                    $retencionIva = round($Base * ($factura->TasaIva / 100), 4);
+                    $retencionIsr = round($Base * ($factura->TasaIsr / 100), 4);
 
-                if($factura->conceptos[$i]->ObjetoImpRet == 1){
+                    $TotalImpuestosRetenidosIva += $retencionIva;
+                    $TotalImpuestosRetenidosIsr += $retencionIsr;
 
-                    $BaseRetenciones = $BaseRetenciones + $Base;
-                    $retencionIva = $Base * ($factura->TasaIva/100);
-                    $retencionIva = number_format(($retencionIva), 2, '.', '');
-
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Base'] = $Base;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Base'] = round($Base, 4);
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Impuesto'] = '002';
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TipoFactor'] = 'Tasa';
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TasaOCuota'] = $factura->TasaIva/100;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TasaOCuota'] = number_format($factura->TasaIva / 100, 6, '.', '');
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Importe'] = $retencionIva;
 
-                    $retencionIsr = $Base * ($factura->TasaIsr/100);
-                    $retencionIsr = number_format(($retencionIsr), 2, '.', '');
-
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Base'] = $Base;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Base'] = round($Base, 4);
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Impuesto'] = '001';
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TipoFactor'] = 'Tasa';
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TasaOCuota'] = $factura->TasaIsr/100;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TasaOCuota'] = number_format($factura->TasaIsr / 100, 6, '.', '');
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Importe'] = $retencionIsr;
-
-                    $TotalImpuestosRetenidosIva = $TotalImpuestosRetenidosIva + $retencionIva;
-                    $TotalImpuestosRetenidosIsr = $TotalImpuestosRetenidosIsr + $retencionIsr;
-                    $TotalImpuestosRetenidos = $TotalImpuestosRetenidos + $TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr;
-
                 }
+            } else {
+                $datos['conceptos'][$i]['ObjetoImp'] = '01'; // No objeto de impuesto
             }
             
         }
 
-        // Se agregan los Impuestos
-        if($factura->conceptos[0]->ObjetoImp == 1){
-
-            $datos['impuestos']['TotalImpuestosTrasladados'] = number_format($TotalImpuestosTrasladados, 2, '.', '');
-
-            if($factura->conceptos[0]->ObjetoImpRet == 1){
-
-                $datos['impuestos']['TotalImpuestosRetenidos'] = number_format($TotalImpuestosRetenidos, 2, '.', '');
-
+        // Aquí se asignan los totales de la factura con 2 decimales
+        $datos['factura']['subtotal'] = round($subtotal, 2);
+        $datos['factura']['descuento'] = round($totalDescuentos, 2);
+        $datos['factura']['total'] = round($datos['factura']['subtotal'] - $datos['factura']['descuento'] + $TotalImpuestosTrasladados - ($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr), 2);
+        
+        // Impuestos globales para el XML, redondeados a 2 decimales
+        if ($TotalImpuestosTrasladados > 0 || $TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+            $datos['impuestos']['TotalImpuestosTrasladados'] = round($TotalImpuestosTrasladados, 2);
+            
+            if ($TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+                // $datos['impuestos']['TotalImpuestosRetenidos'] = round($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr, 2);
+                $datos['impuestos']['TotalImpuestosRetenidos'] = round(round($TotalImpuestosRetenidosIva, 2) + round($TotalImpuestosRetenidosIsr, 2), 2);
             }
-
-            $Importe = number_format(($BaseTraslados * 0.16), 2, '.', '');
-
-            //Validacion adicional
-            if($Importe != number_format($TotalImpuestosTrasladados, 2, '.', '')){
-                $Importe = number_format($TotalImpuestosTrasladados, 2, '.', '');
-            }
-
-            $datos['impuestos']['translados'][0]['Base'] = $BaseTraslados;
+        
+            // A nivel de Comprobante, el SAT exige que la Base de los traslados
+            // sea la suma de las bases de los conceptos con el mismo impuesto y tipo de factor.
+            $datos['impuestos']['translados'][0]['Base'] = round($subtotal - $totalDescuentos, 2); // Base total
             $datos['impuestos']['translados'][0]['impuesto'] = '002';
             $datos['impuestos']['translados'][0]['tasa'] = '0.160000';
-            $datos['impuestos']['translados'][0]['importe'] = $Importe;
+            $datos['impuestos']['translados'][0]['importe'] = round($TotalImpuestosTrasladados, 2);
             $datos['impuestos']['translados'][0]['TipoFactor'] = 'Tasa';
 
-            if($factura->conceptos[0]->ObjetoImpRet == 1){
-
+            if ($TotalImpuestosRetenidosIva > 0) {
                 $datos['impuestos']['retenciones'][0]['impuesto'] = '002';
-                $datos['impuestos']['retenciones'][0]['importe'] = number_format($TotalImpuestosRetenidosIva, 2, '.', '');
-
-                $datos['impuestos']['retenciones'][1]['impuesto'] = '001';
-                $datos['impuestos']['retenciones'][1]['importe'] = number_format($TotalImpuestosRetenidosIsr, 2, '.', '');
-
+                $datos['impuestos']['retenciones'][0]['importe'] = round($TotalImpuestosRetenidosIva, 2);
             }
 
-            
+            if ($TotalImpuestosRetenidosIsr > 0) {
+                $datos['impuestos']['retenciones'][1]['impuesto'] = '001';
+                $datos['impuestos']['retenciones'][1]['importe'] = round($TotalImpuestosRetenidosIsr, 2);
+            }
         }
 
         // echo "<pre>";
@@ -1966,14 +1904,22 @@ class FacturaController extends Controller
         $datos['xml_debug']='sdk2/timbrados/sin_timbrar_ejemplo_factura4.xml';
 
         // Credenciales de Timbrado
-        $datos['PAC']['usuario'] = 'DEMO700101XXX';
-        $datos['PAC']['pass'] = 'DEMO700101XXX';
-        $datos['PAC']['produccion'] = 'NO';
 
+        // $datos['PAC']['usuario'] = 'DEMO700101XXX';
+        // $datos['PAC']['pass'] = 'DEMO700101XXX';
+        // $datos['PAC']['produccion'] = 'NO';
+
+        if($emisor->user_id == 6){
+            $datos['PAC']['usuario'] = 'DEMO700101XXX';
+            $datos['PAC']['pass'] = 'DEMO700101XXX';
+            $datos['PAC']['produccion'] = 'NO';
+        }else{
+            $datos['PAC']['usuario'] = 'AUMA9101171B4';
+            $datos['PAC']['pass'] = 'AUMA9101171B41234';
+            $datos['PAC']['produccion'] = 'SI';
+        }
+        
         // Rutas y clave de los CSD
-        // $datos['conf']['cer'] = str_replace("http://localhost/proy_conta_facil/conta_facilAPI/public/", "", $emisor->cer);
-        // $datos['conf']['key'] = str_replace("http://localhost/proy_conta_facil/conta_facilAPI/public/", "", $emisor->key);
-
         $datos['conf']['cer'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor->cer);
         $datos['conf']['key'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor->key);
 
@@ -1986,15 +1932,6 @@ class FacturaController extends Controller
         $datos['conf']['pass'] = $cadenaDesencriptada;
 
         // Datos de la Factura
-        if($factura->Descuento > 0){
-            $datos['factura']['descuento'] = $factura->Descuento;
-        }
-        
-        //$datos['factura']['fecha_expedicion'] = $factura->Fecha;
-        //$datos['factura']['fecha_expedicion'] = date('Y-m-d\TH:i:s', time() - (60*60));
-        //$datos['factura']['fecha_expedicion'] = date('Y-m-d\TH:i:s', time() - 240);
-        //$datos['factura']['fecha_expedicion'] = "2024-05-10T13:21:24";
-
         $fechaActual = date('Y-m-d\TH:i:s'); // Obtener la fecha y hora actual en formato ISO 8601
         // Restar dos horas a la fecha actual
         $dosHorasAtras = strtotime($fechaActual) - 7200; // Restar 7200 segundos (2 horas)
@@ -2014,29 +1951,20 @@ class FacturaController extends Controller
         $datos['factura']['metodo_pago'] = $factura->mi_metodo_pago->id;
         $datos['factura']['moneda'] = 'MXN';
         $datos['factura']['serie'] = $factura->Serie;
-        $datos['factura']['subtotal'] = $factura->Subtotal;
         //$datos['factura']['tipocambio'] = 1;
         $datos['factura']['tipocomprobante'] = 'I';
-        $datos['factura']['total'] = $factura->Total;
         ////$datos['factura']['RegimenFiscal'] = '601';
         $datos['factura']['Exportacion'] = '01';
 
 
         // Datos del Emisor
         $datos['emisor']['rfc'] = $emisor->Rfc;
-        //$datos['emisor']['rfc'] = utf8_encode($emisor->Rfc);
         $datos['emisor']['nombre'] = $emisor->RazonSocial;
-        //$datos['emisor']['nombre'] = utf8_encode($emisor->RazonSocial);
-        //$datos['emisor']['nombre'] = iconv('UTF-8', 'ISO-8859-1',$emisor->RazonSocial);
-         
         $datos['emisor']['RegimenFiscal'] = $emisor->RegimenFiscal;
-        //$datos['emisor']['FacAtrAdquirente'] = 'ACCEM SERVICIOS EMPRESARIALES SC';
 
         // Datos del Receptor
         $datos['receptor']['rfc'] = $factura->receptor->Rfc;
-        //$datos['receptor']['nombre'] = utf8_encode($factura->receptor->Nombre);
         $datos['receptor']['nombre'] = $factura->receptor->Nombre;
-
         $datos['receptor']['UsoCFDI'] = $factura->receptor->mi_uso_cfdi->id;
         //opcional
         if($factura->receptor->Rfc == "XAXX010101000"){
@@ -2058,114 +1986,118 @@ class FacturaController extends Controller
             $datos['InformacionGlobal']['Año'] = date("Y");
         }
 
+        // Inicializar totales
         $TotalImpuestosTrasladados = 0;
         $TotalImpuestosRetenidos = 0;
         $TotalImpuestosRetenidosIva = 0;
         $TotalImpuestosRetenidosIsr = 0;
-
-        $BaseTraslados = 0;
-        $BaseRetenciones = 0;
+        $totalDescuentos = 0;
+        $subtotal = 0;
 
         // Se agregan los conceptos
         for ($i=0; $i < count($factura->conceptos); $i++) { 
-            $datos['conceptos'][$i]['cantidad'] = $factura->conceptos[$i]->Cantidad;
-            $datos['conceptos'][$i]['unidad'] = $factura->conceptos[$i]->Unidad;
-            //$datos['conceptos'][$i]['ID'] = "1726";
-            
-            //$datos['conceptos'][$i]['descripcion'] = utf8_encode($factura->conceptos[$i]->Descripcion);
-            $datos['conceptos'][$i]['descripcion'] = $factura->conceptos[$i]->Descripcion;
-            $datos['conceptos'][$i]['valorunitario'] = $factura->conceptos[$i]->ValorUnitario;
-            $datos['conceptos'][$i]['importe'] = $factura->conceptos[$i]->Importe;
+            $concepto = $factura->conceptos[$i];
 
-            if($factura->conceptos[$i]->Descuento > 0){
-                $datos['conceptos'][0]['Descuento'] = $factura->conceptos[$i]->Descuento;
+            // Usamos 4 decimales como lo indicaste
+            $cantidad = round($concepto->Cantidad, 4);
+            $valorUnitario = round($concepto->ValorUnitario, 4);
+            $importeConcepto = round($cantidad * $valorUnitario, 4);
+
+            //Neta
+            if($factura->tipo == 1){
+                $importeConcepto = round($importeConcepto / 1.16, 4);
             }
 
-            $datos['conceptos'][$i]['ClaveProdServ'] = $factura->conceptos[$i]->mi_clave_prod_serv->id;
-            $datos['conceptos'][$i]['ClaveUnidad'] = $factura->conceptos[$i]->mi_clave_unidad->id;
+            $descuentoConcepto = round($concepto->Descuento, 4);
 
-            $datos['conceptos'][$i]['ObjetoImp'] = '01'; //no
+            $datos['conceptos'][$i]['cantidad'] = $cantidad;
+            $datos['conceptos'][$i]['unidad'] = $concepto->Unidad;
+            $datos['conceptos'][$i]['descripcion'] = $concepto->Descripcion;
+            $datos['conceptos'][$i]['valorunitario'] = $valorUnitario;
+            $datos['conceptos'][$i]['importe'] = $importeConcepto;
+            
+            if ($descuentoConcepto > 0) {
+                $datos['conceptos'][$i]['Descuento'] = $descuentoConcepto;
+                $totalDescuentos += $descuentoConcepto;
+            }
 
-            if($factura->conceptos[$i]->ObjetoImp == 1){
-                $datos['conceptos'][$i]['ObjetoImp'] = '02'; //si
+            $datos['conceptos'][$i]['ClaveProdServ'] = $concepto->mi_clave_prod_serv->id;
+            $datos['conceptos'][$i]['ClaveUnidad'] = $concepto->mi_clave_unidad->id;
 
-                $Base = $factura->conceptos[$i]->Importe - $factura->conceptos[$i]->Descuento;
-                $BaseTraslados = $BaseTraslados + $Base;
+            // La Base del cálculo del impuesto es el importe del concepto menos su descuento.
+            $Base = $importeConcepto - $descuentoConcepto;
+            $subtotal += $importeConcepto;
 
-                $Importe = number_format(($Base * 0.16), 2, '.', '');
-                $TotalImpuestosTrasladados = $TotalImpuestosTrasladados + $Importe;
+            if ($concepto->ObjetoImp == 1) {
+                $datos['conceptos'][$i]['ObjetoImp'] = '02'; // Sí objeto de impuesto
 
-                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Base'] = $Base;
-                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Impuesto'] = '002';
+                // Cálculo y redondeo del IVA
+                $ImporteIVA = round($Base * 0.16, 4);
+                $TotalImpuestosTrasladados += $ImporteIVA;
+
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Base'] = round($Base, 4);
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Impuesto'] = '002'; // IVA
                 $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TipoFactor'] = 'Tasa';
                 $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TasaOCuota'] = '0.160000';
-                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Importe'] = $Importe;
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Importe'] = $ImporteIVA;
+                
+                // Lógica para las retenciones
+                if ($concepto->ObjetoImpRet == 1) {
+                    $retencionIva = round($Base * ($factura->TasaIva / 100), 4);
+                    $retencionIsr = round($Base * ($factura->TasaIsr / 100), 4);
 
-                if($factura->conceptos[$i]->ObjetoImpRet == 1){
+                    $TotalImpuestosRetenidosIva += $retencionIva;
+                    $TotalImpuestosRetenidosIsr += $retencionIsr;
 
-                    $BaseRetenciones = $BaseRetenciones + $Base;
-                    $retencionIva = $Base * ($factura->TasaIva/100);
-                    $retencionIva = number_format(($retencionIva), 2, '.', '');
-
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Base'] = $Base;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Base'] = round($Base, 4);
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Impuesto'] = '002';
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TipoFactor'] = 'Tasa';
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TasaOCuota'] = $factura->TasaIva/100;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TasaOCuota'] = number_format($factura->TasaIva / 100, 6, '.', '');
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Importe'] = $retencionIva;
 
-                    $retencionIsr = $Base * ($factura->TasaIsr/100);
-                    $retencionIsr = number_format(($retencionIsr), 2, '.', '');
-
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Base'] = $Base;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Base'] = round($Base, 4);
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Impuesto'] = '001';
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TipoFactor'] = 'Tasa';
-                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TasaOCuota'] = $factura->TasaIsr/100;
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TasaOCuota'] = number_format($factura->TasaIsr / 100, 6, '.', '');
                     $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Importe'] = $retencionIsr;
-
-                    $TotalImpuestosRetenidosIva = $TotalImpuestosRetenidosIva + $retencionIva;
-                    $TotalImpuestosRetenidosIsr = $TotalImpuestosRetenidosIsr + $retencionIsr;
-                    $TotalImpuestosRetenidos = $TotalImpuestosRetenidos + $TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr;
-
                 }
+            } else {
+                $datos['conceptos'][$i]['ObjetoImp'] = '01'; // No objeto de impuesto
             }
             
         }
 
-        // Se agregan los Impuestos
-        if($factura->conceptos[0]->ObjetoImp == 1){
-
-            $datos['impuestos']['TotalImpuestosTrasladados'] = number_format($TotalImpuestosTrasladados, 2, '.', '');
-
-            if($factura->conceptos[0]->ObjetoImpRet == 1){
-
-                $datos['impuestos']['TotalImpuestosRetenidos'] = number_format($TotalImpuestosRetenidos, 2, '.', '');
-
+        // Aquí se asignan los totales de la factura con 2 decimales
+        $datos['factura']['subtotal'] = round($subtotal, 2);
+        $datos['factura']['descuento'] = round($totalDescuentos, 2);
+        $datos['factura']['total'] = round($datos['factura']['subtotal'] - $datos['factura']['descuento'] + $TotalImpuestosTrasladados - ($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr), 2);
+        
+        // Impuestos globales para el XML, redondeados a 2 decimales
+        if ($TotalImpuestosTrasladados > 0 || $TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+            $datos['impuestos']['TotalImpuestosTrasladados'] = round($TotalImpuestosTrasladados, 2);
+            
+            if ($TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+                // $datos['impuestos']['TotalImpuestosRetenidos'] = round($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr, 2);
+                $datos['impuestos']['TotalImpuestosRetenidos'] = round(round($TotalImpuestosRetenidosIva, 2) + round($TotalImpuestosRetenidosIsr, 2), 2);
             }
-
-            $Importe = number_format(($BaseTraslados * 0.16), 2, '.', '');
-
-            //Validacion adicional
-            if($Importe != number_format($TotalImpuestosTrasladados, 2, '.', '')){
-                $Importe = number_format($TotalImpuestosTrasladados, 2, '.', '');
-            }
-
-            $datos['impuestos']['translados'][0]['Base'] = $BaseTraslados;
+        
+            // A nivel de Comprobante, el SAT exige que la Base de los traslados
+            // sea la suma de las bases de los conceptos con el mismo impuesto y tipo de factor.
+            $datos['impuestos']['translados'][0]['Base'] = round($subtotal - $totalDescuentos, 2); // Base total
             $datos['impuestos']['translados'][0]['impuesto'] = '002';
             $datos['impuestos']['translados'][0]['tasa'] = '0.160000';
-            $datos['impuestos']['translados'][0]['importe'] = $Importe;
+            $datos['impuestos']['translados'][0]['importe'] = round($TotalImpuestosTrasladados, 2);
             $datos['impuestos']['translados'][0]['TipoFactor'] = 'Tasa';
 
-            if($factura->conceptos[0]->ObjetoImpRet == 1){
-
+            if ($TotalImpuestosRetenidosIva > 0) {
                 $datos['impuestos']['retenciones'][0]['impuesto'] = '002';
-                $datos['impuestos']['retenciones'][0]['importe'] = number_format($TotalImpuestosRetenidosIva, 2, '.', '');
-
-                $datos['impuestos']['retenciones'][1]['impuesto'] = '001';
-                $datos['impuestos']['retenciones'][1]['importe'] = number_format($TotalImpuestosRetenidosIsr, 2, '.', '');
-
+                $datos['impuestos']['retenciones'][0]['importe'] = round($TotalImpuestosRetenidosIva, 2);
             }
 
-            
+            if ($TotalImpuestosRetenidosIsr > 0) {
+                $datos['impuestos']['retenciones'][1]['impuesto'] = '001';
+                $datos['impuestos']['retenciones'][1]['importe'] = round($TotalImpuestosRetenidosIsr, 2);
+            }
         }
 
         // echo "<pre>";
@@ -2289,8 +2221,8 @@ class FacturaController extends Controller
                 $factura->conceptos[$i]->ObjetoImp = 'Si obj de impuesto.';
                 $Base = $factura->conceptos[$i]->Importe - $factura->conceptos[$i]->Descuento;
 
-                $Importe = number_format(($Base * 0.16), 2, '.', '');
-                $TotalImpuestosTrasladados = $TotalImpuestosTrasladados + $Importe;
+                $Importe = round($Base * 0.16, 4);
+                $TotalImpuestosTrasladados += $Importe;
 
                 $resul = (object) [
                     'Impuesto' => "IVA",
@@ -2304,8 +2236,7 @@ class FacturaController extends Controller
 
                 if($factura->conceptos[$i]->ObjetoImpRet == 1){
 
-                    $retencionIva = $Base * ($factura->TasaIva/100);
-                    $retencionIva = number_format(($retencionIva), 2, '.', '');
+                    $retencionIva = round($Base * ($factura->TasaIva / 100), 4);
                     $resul = (object) [
                         'Impuesto' => "IVA",
                         'Tipo' => "Retención",
@@ -2316,8 +2247,7 @@ class FacturaController extends Controller
                     ];
                     array_push($Impuestos,$resul);
 
-                    $retencionIsr = $Base * ($factura->TasaIsr/100);
-                    $retencionIsr = number_format(($retencionIsr), 2, '.', '');
+                    $retencionIsr = round($Base * ($factura->TasaIsr / 100), 4);
                     $resul = (object) [
                         'Impuesto' => "ISR",
                         'Tipo' => "Retención",
@@ -2328,21 +2258,21 @@ class FacturaController extends Controller
                     ];
                     array_push($Impuestos,$resul);
 
-                    $TotalImpuestosRetenidosIva = $TotalImpuestosRetenidosIva + $retencionIva;
-                    $TotalImpuestosRetenidosIsr = $TotalImpuestosRetenidosIsr + $retencionIsr;
-                    $TotalImpuestosRetenidos = $TotalImpuestosRetenidos + $TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr;
+                    $TotalImpuestosRetenidosIva += $retencionIva;
+                    $TotalImpuestosRetenidosIsr += $retencionIsr;
 
                 }
 
                 $factura->conceptos[$i]->Impuestos = $Impuestos;
 
-
             }
         }
-        $factura->TotalImpuestosTrasladados = number_format($TotalImpuestosTrasladados, 2, '.', '');
-        $factura->TotalImpuestosRetenidos = number_format($TotalImpuestosRetenidos, 2, '.', '');
-        $factura->TotalImpuestosRetenidosIva = number_format($TotalImpuestosRetenidosIva, 2, '.', '');
-        $factura->TotalImpuestosRetenidosIsr = number_format($TotalImpuestosRetenidosIsr, 2, '.', '');
+
+        $TotalImpuestosRetenidos = round($TotalImpuestosRetenidosIva, 2) + round($TotalImpuestosRetenidosIsr, 2);
+        $factura->TotalImpuestosTrasladados = round($TotalImpuestosTrasladados, 2);
+        $factura->TotalImpuestosRetenidos = round($TotalImpuestosRetenidos, 2);
+        $factura->TotalImpuestosRetenidosIva = round($TotalImpuestosRetenidosIva, 2);
+        $factura->TotalImpuestosRetenidosIsr = round($TotalImpuestosRetenidosIsr, 2);
 
         $emisor = CfdiEmpresa::/*with('producto')
             ->*/with('mi_regimen_fiscal')
@@ -2378,7 +2308,6 @@ class FacturaController extends Controller
 
         return $url;
     }
-
 
     public function emailFactura($factura_id)
     {
@@ -2685,19 +2614,26 @@ class FacturaController extends Controller
         } 
 
         //Iniciar proceso de facturacion
-        $Folio = (CfdiComprobante::count())+1;
+        // $Folio = (CfdiComprobante::count())+1;
 
-        $Serie = (CfdiComprobante::
+        // $Serie = (CfdiComprobante::
+        //     where('emisor_id',$empresa->id)
+        //     ->count())+1;
+
+        $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->count())+1;
 
+        $Folio = strtoupper("F0".$cliente->id."0".$empresa->id."0".$contador);
+        $Serie = strtoupper("A0".$cliente->id."0".$empresa->id."0".$contador);
+
         //quitar el iva al subtotal
         $Subtotal = $total_ingresos_contables/1.16;
-        $Subtotal = number_format($Subtotal, 2, '.', '');
+        $Subtotal = round($Subtotal, 2);
 
         //recalcular el total con el iva
         $Total = $Subtotal*1.16;
-        $Total = number_format($Total, 2, '.', '');
+        $Total = round($Total, 2);
 
 
         //crear un pedido nuevo en curso
@@ -2706,8 +2642,10 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            'Serie'=>"S-".$empresa->id."-".$Serie,
-            'Folio'=>"F-".$empresa->id."-".$Folio,
+            // 'Serie'=>"S-".$empresa->id."-".$Serie,
+            // 'Folio'=>"F-".$empresa->id."-".$Folio,
+            'Serie'=>$Serie,
+            'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
             'Sello'=>"",
             'FormaPago'=>$producto->FormaPago, 
@@ -3198,11 +3136,18 @@ class FacturaController extends Controller
         } 
 
         //Iniciar proceso de facturacion
-        $Folio = (CfdiComprobante::count())+1;
+        // $Folio = (CfdiComprobante::count())+1;
 
-        $Serie = (CfdiComprobante::
+        // $Serie = (CfdiComprobante::
+        //     where('emisor_id',$empresa->id)
+        //     ->count())+1;
+
+        $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->count())+1;
+
+        $Folio = strtoupper("F0".$cliente->id."0".$empresa->id."0".$contador);
+        $Serie = strtoupper("A0".$cliente->id."0".$empresa->id."0".$contador);
 
         //crear un pedido nuevo en curso
         $pedidoCurso=CfdiComprobante::create([
@@ -3210,8 +3155,10 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            'Serie'=>"S-".$empresa->id."-".$Serie,
-            'Folio'=>"F-".$empresa->id."-".$Folio,
+            // 'Serie'=>"S-".$empresa->id."-".$Serie,
+            // 'Folio'=>"F-".$empresa->id."-".$Folio,
+            'Serie'=>$Serie,
+            'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
             'Sello'=>"",
             'FormaPago'=>$factura->FormaPago,
@@ -3375,6 +3322,1135 @@ class FacturaController extends Controller
             ], 200); 
         }
   
+    }
+
+    public function timbrarFacturaDePrueba1($user_id)
+    {
+
+        $emisor = CfdiEmpresa::
+            with('mi_regimen_fiscal')
+            ->where('user_id', $user_id)
+            ->first();
+
+        if(!$emisor){
+            return response()->json(['error'=>'Emisor no encontrado.'],404);
+        }
+
+        // Se especifica la version de CFDi 4.0
+        $datos['version_cfdi'] = '4.0';
+        $datos['validacion_local']='NO';
+
+        // Ruta del XML Timbrado
+        $datos['cfdi']='sdk2/timbrados/cfdi_ejemplo_factura4.xml';
+
+        // Ruta del XML de Debug
+        $datos['xml_debug']='sdk2/timbrados/sin_timbrar_ejemplo_factura4.xml';
+
+        // Credenciales de Timbrado
+        $datos['PAC']['usuario'] = 'DEMO700101XXX';
+        $datos['PAC']['pass'] = 'DEMO700101XXX';
+        $datos['PAC']['produccion'] = 'NO';
+
+        // Rutas y clave de los CSD
+        $datos['conf']['cer'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor['cer']);
+        $datos['conf']['key'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor['key']);
+
+        // La cadena cifrada
+        $cadenaEncriptada = $emisor['pass'];
+        $claveAdicional = config('app.lada_d');
+        $cadenaDesencriptada = Crypt::decrypt($cadenaEncriptada, $claveAdicional);
+
+        $datos['conf']['pass'] = $cadenaDesencriptada;
+
+        // Datos de la Factura
+        //$datos['factura']['descuento'] = '0.00';
+
+        $fechaActual = date('Y-m-d\TH:i:s'); // Obtener la fecha y hora actual en formato ISO 8601
+        // Restar dos horas a la fecha actual
+        $dosHorasAtras = strtotime($fechaActual) - 7200; // Restar 7200 segundos (2 horas)
+        // Formatear la fecha y hora dos horas atrás en formato ISO 8601
+        $fechaDosHorasAtras = date('Y-m-d\TH:i:s', $dosHorasAtras);
+        $datos['factura']['fecha_expedicion'] = $fechaDosHorasAtras;
+
+        $datos['factura']['folio'] = uniqid();
+
+        $datos['factura']['forma_pago'] = '01';
+        $datos['factura']['LugarExpedicion'] = $emisor['CP'];
+        $datos['factura']['metodo_pago'] = 'PUE';
+        $datos['factura']['moneda'] = 'MXN';
+        $datos['factura']['serie'] = uniqid();
+        $datos['factura']['subtotal'] = 12931.03;
+        //$datos['factura']['tipocambio'] = 1;
+        $datos['factura']['tipocomprobante'] = 'I';
+        $datos['factura']['total'] = 15000.00;
+        ////$datos['factura']['RegimenFiscal'] = '601';
+        $datos['factura']['Exportacion'] = '01';
+
+
+        // Datos del Emisor
+        $datos['emisor']['rfc'] = $emisor['Rfc'];
+        $datos['emisor']['nombre'] = $emisor['RazonSocial'];
+        $datos['emisor']['RegimenFiscal'] = $emisor['RegimenFiscal'];
+        //$datos['emisor']['FacAtrAdquirente'] = 'ACCEM SERVICIOS EMPRESARIALES SC';
+
+        // Datos del Receptor
+        $datos['receptor']['rfc'] = 'VIDE9602275P5';
+        $datos['receptor']['nombre'] = 'EDUARDO VICENTE DIONICIO';
+        $datos['receptor']['UsoCFDI'] = 'G03';
+        $datos['receptor']['DomicilioFiscalReceptor'] = '43612';
+        
+        ////$datos['receptor']['ResidenciaFiscal']= 'MEX';
+        ////$datos['receptor']['NumRegIdTrib'] = 'B';
+        $datos['receptor']['RegimenFiscalReceptor'] = '612';
+
+        // Se agregan los conceptos
+        $datos['conceptos'][0]['cantidad'] = 1.0000;
+        $datos['conceptos'][0]['unidad'] = 'Pieza';
+        $datos['conceptos'][0]['ID'] = "1726";
+        $datos['conceptos'][0]['descripcion'] = "Cigarros";
+        $datos['conceptos'][0]['valorunitario'] = 12931.0345;
+        $datos['conceptos'][0]['importe'] = 12931.0345;
+        $datos['conceptos'][0]['ClaveProdServ'] = '50211503';
+        $datos['conceptos'][0]['ClaveUnidad'] = 'H87';
+        $datos['conceptos'][0]['ObjetoImp'] = '02';
+
+        $datos['conceptos'][0]['Impuestos']['Traslados'][0]['Base'] = 12931.0345;
+        $datos['conceptos'][0]['Impuestos']['Traslados'][0]['Impuesto'] = '002';
+        $datos['conceptos'][0]['Impuestos']['Traslados'][0]['TipoFactor'] = 'Tasa';
+        $datos['conceptos'][0]['Impuestos']['Traslados'][0]['TasaOCuota'] = '0.160000';
+        $datos['conceptos'][0]['Impuestos']['Traslados'][0]['Importe'] = 2068.9655;
+
+        // $datos['conceptos'][1]['cantidad'] = 1.00;
+        // $datos['conceptos'][1]['unidad'] = 'NA';
+        // $datos['conceptos'][1]['ID'] = "1586";
+        // $datos['conceptos'][1]['descripcion'] = "PRODUCTO DE PRUEBA 2";
+        // $datos['conceptos'][1]['valorunitario'] = 199.00;
+        // $datos['conceptos'][1]['importe'] = 199.00;
+        // $datos['conceptos'][1]['ClaveProdServ'] = '01010101';
+        // $datos['conceptos'][1]['ClaveUnidad'] = 'ACT';
+        // $datos['conceptos'][1]['ObjetoImp'] = '02';
+
+        // $datos['conceptos'][1]['Impuestos']['Traslados'][0]['Base'] = 199.00;
+        // $datos['conceptos'][1]['Impuestos']['Traslados'][0]['Impuesto'] = '002';
+        // $datos['conceptos'][1]['Impuestos']['Traslados'][0]['TipoFactor'] = 'Tasa';
+        // $datos['conceptos'][1]['Impuestos']['Traslados'][0]['TasaOCuota'] = '0.160000';
+        // $datos['conceptos'][1]['Impuestos']['Traslados'][0]['Importe'] = 31.84;
+
+        $datos['impuestos']['TotalImpuestosTrasladados'] = 2068.97;
+
+        // Se agregan los Impuestos
+        $datos['impuestos']['translados'][0]['Base'] = 12931.03;
+        $datos['impuestos']['translados'][0]['impuesto'] = '002';
+        $datos['impuestos']['translados'][0]['tasa'] = '0.160000';
+        $datos['impuestos']['translados'][0]['importe'] = 2068.97;
+        $datos['impuestos']['translados'][0]['TipoFactor'] = 'Tasa';
+
+        // echo "<pre>";
+        // print_r($datos);
+        // echo "</pre>";
+
+        //echo "<pre>"; echo arr2cs($datos); echo "</pre>".die();
+        // Se ejecuta el SDK
+        $res = mf_genera_cfdi4($datos);
+
+        file_put_contents('webhook_log_cfdi_timbrado.txt', print_r($res, true), FILE_APPEND);
+
+        ///////////    MOSTRAR RESULTADOS DEL ARRAY $res   ///////////
+
+        //dd($res);
+        
+        return $res;
+        
+
+    }
+
+    public function timbrarFacturaDePrueba($user_id)
+    {
+        $json_string = '{
+            "TasaIva": 16,
+            "TasaIsr": 1.25,
+            "conceptos": [
+                {
+                    "Unidad": "Pieza",
+                    "ClaveProdServ": "50211503",
+                    "ClaveUnidad": "H87",
+                    "Descripcion": "Producto de prueba 1",
+                    "Cantidad": 1,
+                    "ValorUnitario": 285.00,
+                    "Descuento": 0,
+                    "ObjetoImp": 1,
+                    "ObjetoImpRet":0
+                }
+            ]
+        }';
+
+        // Decodificar el JSON en un objeto PHP
+        $factura = json_decode($json_string);
+
+        $emisor = CfdiEmpresa::
+            with('mi_regimen_fiscal')
+            ->where('user_id', $user_id)
+            ->first();
+
+        if(!$emisor){
+            return response()->json(['error'=>'Emisor no encontrado.'],404);
+        }
+
+        // Se especifica la version de CFDi 4.0
+        $datos['version_cfdi'] = '4.0';
+        $datos['validacion_local']='NO';
+
+        // Ruta del XML Timbrado
+        $datos['cfdi']='sdk2/timbrados/cfdi_ejemplo_factura4.xml';
+
+        // Ruta del XML de Debug
+        $datos['xml_debug']='sdk2/timbrados/sin_timbrar_ejemplo_factura4.xml';
+
+        // Credenciales de Timbrado
+        $datos['PAC']['usuario'] = 'DEMO700101XXX';
+        $datos['PAC']['pass'] = 'DEMO700101XXX';
+        $datos['PAC']['produccion'] = 'NO';
+
+        // Rutas y clave de los CSD
+        $datos['conf']['cer'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor['cer']);
+        $datos['conf']['key'] = str_replace("https://apicontafacil.internow.com.mx/", "", $emisor['key']);
+
+        // La cadena cifrada
+        $cadenaEncriptada = $emisor['pass'];
+        $claveAdicional = config('app.lada_d');
+        $cadenaDesencriptada = Crypt::decrypt($cadenaEncriptada, $claveAdicional);
+
+        $datos['conf']['pass'] = $cadenaDesencriptada;
+
+        // Datos de la Factura
+        $fechaActual = date('Y-m-d\TH:i:s'); // Obtener la fecha y hora actual en formato ISO 8601
+        // Restar dos horas a la fecha actual
+        $dosHorasAtras = strtotime($fechaActual) - 7200; // Restar 7200 segundos (2 horas)
+        // Formatear la fecha y hora dos horas atrás en formato ISO 8601
+        $fechaDosHorasAtras = date('Y-m-d\TH:i:s', $dosHorasAtras);
+        $datos['factura']['fecha_expedicion'] = $fechaDosHorasAtras;
+
+        $datos['factura']['folio'] = uniqid();
+
+        $datos['factura']['forma_pago'] = '01';
+        $datos['factura']['LugarExpedicion'] = $emisor['CP'];
+        $datos['factura']['metodo_pago'] = 'PUE';
+        $datos['factura']['moneda'] = 'MXN';
+        $datos['factura']['serie'] = uniqid();
+        //$datos['factura']['tipocambio'] = 1;
+        $datos['factura']['tipocomprobante'] = 'I';
+        ////$datos['factura']['RegimenFiscal'] = '601';
+        $datos['factura']['Exportacion'] = '01';
+
+
+        // Datos del Emisor
+        $datos['emisor']['rfc'] = $emisor['Rfc'];
+        $datos['emisor']['nombre'] = $emisor['RazonSocial'];
+        $datos['emisor']['RegimenFiscal'] = $emisor['RegimenFiscal'];
+        //$datos['emisor']['FacAtrAdquirente'] = 'ACCEM SERVICIOS EMPRESARIALES SC';
+
+        // Datos del Receptor
+        $datos['receptor']['rfc'] = 'VIDE9602275P5';
+        $datos['receptor']['nombre'] = 'EDUARDO VICENTE DIONICIO';
+        $datos['receptor']['UsoCFDI'] = 'G03';
+        $datos['receptor']['DomicilioFiscalReceptor'] = '43612';
+        
+        ////$datos['receptor']['ResidenciaFiscal']= 'MEX';
+        ////$datos['receptor']['NumRegIdTrib'] = 'B';
+        $datos['receptor']['RegimenFiscalReceptor'] = '612';
+
+        // Inicializar totales
+        $TotalImpuestosTrasladados = 0;
+        $TotalImpuestosRetenidos = 0;
+        $TotalImpuestosRetenidosIva = 0;
+        $TotalImpuestosRetenidosIsr = 0;
+        $totalDescuentos = 0;
+        $subtotal = 0;
+
+        // Se agregan los conceptos
+        for ($i=0; $i < count($factura->conceptos); $i++) { 
+            $concepto = $factura->conceptos[$i];
+
+            // Usamos 4 decimales como lo indicaste
+            $valorUnitario = round($concepto->ValorUnitario, 4);
+            $importeConcepto = round($concepto->Cantidad * $valorUnitario, 4);
+            $importeConcepto = round($importeConcepto / 1.16, 4);
+            $descuentoConcepto = round($concepto->Descuento, 4);
+
+            $datos['conceptos'][$i]['cantidad'] = $concepto->Cantidad;
+            $datos['conceptos'][$i]['unidad'] = $concepto->Unidad;
+            $datos['conceptos'][$i]['descripcion'] = $concepto->Descripcion;
+            $datos['conceptos'][$i]['valorunitario'] = $valorUnitario;
+            $datos['conceptos'][$i]['importe'] = $importeConcepto;
+            
+            if ($descuentoConcepto > 0) {
+                $datos['conceptos'][$i]['Descuento'] = $descuentoConcepto;
+                $totalDescuentos += $descuentoConcepto;
+            }
+
+            $datos['conceptos'][$i]['ClaveProdServ'] = $concepto->ClaveProdServ;
+            $datos['conceptos'][$i]['ClaveUnidad'] = $concepto->ClaveUnidad;
+
+            // La Base del cálculo del impuesto es el importe del concepto menos su descuento.
+            $Base = $importeConcepto - $descuentoConcepto;
+            $subtotal += $importeConcepto;
+
+            if ($concepto->ObjetoImp == 1) {
+                $datos['conceptos'][$i]['ObjetoImp'] = '02'; // Sí objeto de impuesto
+
+                // Cálculo y redondeo del IVA
+                $ImporteIVA = round($Base * 0.16, 4);
+                $TotalImpuestosTrasladados += $ImporteIVA;
+
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Base'] = round($Base, 4);
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Impuesto'] = '002'; // IVA
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TipoFactor'] = 'Tasa';
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TasaOCuota'] = '0.160000';
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Importe'] = $ImporteIVA;
+                
+                // Lógica para las retenciones
+                if ($concepto->ObjetoImpRet == 1) {
+                    $retencionIva = round($Base * ($factura->TasaIva / 100), 4);
+                    $retencionIsr = round($Base * ($factura->TasaIsr / 100), 4);
+
+                    $TotalImpuestosRetenidosIva += $retencionIva;
+                    $TotalImpuestosRetenidosIsr += $retencionIsr;
+
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Base'] = round($Base, 4);
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Impuesto'] = '002';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TipoFactor'] = 'Tasa';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TasaOCuota'] = number_format($factura->TasaIva / 100, 6, '.', '');
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Importe'] = $retencionIva;
+
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Base'] = round($Base, 4);
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Impuesto'] = '001';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TipoFactor'] = 'Tasa';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TasaOCuota'] = number_format($factura->TasaIsr / 100, 6, '.', '');
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Importe'] = $retencionIsr;
+                }
+            } else {
+                $datos['conceptos'][$i]['ObjetoImp'] = '01'; // No objeto de impuesto
+            }
+            
+        }
+
+        // Aquí se asignan los totales de la factura con 2 decimales
+        $datos['factura']['subtotal'] = round($subtotal, 2);
+        $datos['factura']['descuento'] = round($totalDescuentos, 2);
+        $datos['factura']['total'] = round($datos['factura']['subtotal'] - $datos['factura']['descuento'] + $TotalImpuestosTrasladados - ($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr), 2);
+        
+        // Impuestos globales para el XML, redondeados a 2 decimales
+        if ($TotalImpuestosTrasladados > 0 || $TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+            $datos['impuestos']['TotalImpuestosTrasladados'] = round($TotalImpuestosTrasladados, 2);
+            
+            if ($TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+                // $datos['impuestos']['TotalImpuestosRetenidos'] = round($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr, 2);
+                $datos['impuestos']['TotalImpuestosRetenidos'] = round(round($TotalImpuestosRetenidosIva, 2) + round($TotalImpuestosRetenidosIsr, 2), 2);
+            }
+        
+            // A nivel de Comprobante, el SAT exige que la Base de los traslados
+            // sea la suma de las bases de los conceptos con el mismo impuesto y tipo de factor.
+            $datos['impuestos']['translados'][0]['Base'] = round($subtotal - $totalDescuentos, 2); // Base total
+            $datos['impuestos']['translados'][0]['impuesto'] = '002';
+            $datos['impuestos']['translados'][0]['tasa'] = '0.160000';
+            $datos['impuestos']['translados'][0]['importe'] = round($TotalImpuestosTrasladados, 2);
+            $datos['impuestos']['translados'][0]['TipoFactor'] = 'Tasa';
+
+            if ($TotalImpuestosRetenidosIva > 0) {
+                $datos['impuestos']['retenciones'][0]['impuesto'] = '002';
+                $datos['impuestos']['retenciones'][0]['importe'] = round($TotalImpuestosRetenidosIva, 2);
+            }
+
+            if ($TotalImpuestosRetenidosIsr > 0) {
+                $datos['impuestos']['retenciones'][1]['impuesto'] = '001';
+                $datos['impuestos']['retenciones'][1]['importe'] = round($TotalImpuestosRetenidosIsr, 2);
+            }
+        }
+
+        echo "<pre>";
+        print_r($datos);
+        echo "</pre>";
+
+        //echo "<pre>"; echo arr2cs($datos); echo "</pre>".die();
+        // Se ejecuta el SDK
+        $res = mf_genera_cfdi4($datos);
+
+        ///////////    MOSTRAR RESULTADOS DEL ARRAY $res   ///////////
+
+        //dd($res);
+        
+        echo "<h1>Respuesta Generar XML y Timbrado</h1>";
+        foreach ($res AS $variable => $valor) {
+            $valor = htmlentities($valor);
+            $valor = str_replace('&lt;br/&gt;', '<br/>', $valor);
+            echo "<b>[$variable]=</b>$valor<hr>";
+        }
+        
+
+    }
+
+    /*Timbra una venta generada desde el POS*/
+    public function timbrarVenta(Request $request, $venta_id)
+    {
+        $orden = PosOrder::with([
+            'detalles.producto',
+            'pagos.user',
+            'user',
+            'caja',
+            'contacto',
+            'comprobante'
+        ])->find($venta_id);
+
+        if (!$orden) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Orden no encontrada.'
+            ], 404);
+        }
+
+        if($orden->status !== 'pagada'){
+            return response()->json([
+                'success' => false,
+                'message' => 'Solo se pueden timbrar órdenes pagadas.'
+            ], 400);
+        }
+
+        if($orden->facturada || $orden->comprobante_id){
+            return response()->json([
+                'success' => false,
+                'message' => 'La orden ya está timbrada.'
+            ], 400);
+        }
+
+        $cliente = User::whereNull('flag_eliminado')
+            ->where('id', $orden->user_id)
+            ->with('cfdi_empresa')
+            ->first();
+
+        if (!$cliente)
+        {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario no encontrado.'
+            ], 404);
+        }
+
+        if ($cliente->status != 1)
+        {
+            return response()->json([
+                'success' => false,
+                'message' => 'Emisor inhabilitado para generar timbre electrónico.'
+            ], 400);
+        }
+
+        if (!$cliente->cfdi_empresa)
+        {
+            return response()->json([
+                'success' => false,
+                'message' => 'Empresa no encontrada.'
+            ], 404);
+        }
+
+        $empresa = $cliente->cfdi_empresa;
+
+        // --- Validar datos de Emisor ---
+        $camposRequeridosEmisor = [
+            'Rfc', 'RazonSocial', 'RegimenFiscal',
+            'CP', 'cer', 'key', 'pass'
+        ];
+
+        foreach ($camposRequeridosEmisor as $campo) {
+            if (empty($empresa->$campo)) {
+                $message = 'Para crear una factura, primero debes configurar tus datos de emisor.';
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $message
+                ], 409);
+            }
+        }
+
+        $limite_facturacion = $this->determinarLimiteFacturacion($empresa->Rfc,$empresa->RegimenFiscal);
+        if($limite_facturacion != null && $limite_facturacion != 0){
+
+            $total_facturado = $this->getTotalFacturado($empresa->user_id);
+
+            if($total_facturado >= $limite_facturacion){
+                return response()->json([
+                    'success' => false,
+                    'message'=>'Ya alcanzaste el límite de $'.$limite_facturacion.' pesos mensuales facturables.'
+                ], 409);
+            }else if(($total_facturado+$orden->total) >= $limite_facturacion){
+                return response()->json([
+                    'success' => false,
+                    'message'=>'El total de la factura excede el límite de $'.$limite_facturacion.' pesos mensuales facturables.'
+                ], 409);
+            }
+
+        }
+
+        if ($cliente->count_timbres < 1) {
+            return response()->json([
+                'success' => false,
+                'message'=>'No cuentas con timbres disponibles. Te recomendamos adquirir un paquete de timbres para continuar disfrutando de nuestros servicios de timbrado.'
+            ], 409);
+        }
+
+        // =============================
+        // FACTURA A PUBLICO EN GENERAL
+        // =============================
+
+        if(
+            strtoupper(str_replace([' ', '-'], '', $orden->contacto->Rfc)) == 'XAXX010101000' ||
+            strtoupper($orden->contacto->Nombre) == 'PUBLICO EN GENERAL' ||
+            strtoupper($orden->contacto->Nombre) == 'PÚBLICO EN GENERAL' 
+        ){
+            $orden->contacto->Rfc = 'XAXX010101000';
+            $orden->contacto->Nombre = 'PUBLICO EN GENERAL';
+            $orden->contacto->UsoCFDI = 24; //'Sin efectos fiscales.'
+            $orden->contacto->RegimenFiscalReceptor = 616; //Sin obligaciones fiscales
+            $orden->retenciones == 'Sin retenciones';
+            $MetodoPago = 2; //Pago en una sola exhibición
+        }
+
+        // =============================
+        // DATOS DEL COMPROBANTE
+        // =============================
+
+        // --- Forma de pago ---
+
+        $FormaPago = $request->input('FormaPago');
+        if($FormaPago >= 1 && $FormaPago <= 8){
+            $FormaPago = '0'.$FormaPago;
+        }
+
+        $forma_pago = Cfdi40FormaPago::where('id', $FormaPago)
+            ->first();
+
+        if (!$forma_pago) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Forma de Pago no disponible en el catálogo. Por favor, intenta ingresar una Forma de Pago diferente.'
+            ], 404);
+        }
+
+        $comprobante_forma_pago = $forma_pago->id;
+
+        // --- Metodo de pago ---
+        $MetodoPago = 2; //Pago en una sola exhibición
+
+        // --- Tipo de factura ---
+        $Tipo = 2; //1 = factura neta 2 = factura mas iba
+
+        // --- Retenciones ---
+        $TasaIva = 0;
+        $TasaIsr = 0;
+
+        if ($orden->retenciones == 'Con retenciones') {
+            $TasaIva = 16;
+            $TasaIsr = 1.25;
+        }
+
+        // =============================
+        // DATOS DEL RECEPTOR
+        // =============================
+
+        // --- RFC ---
+        $receptor_rfc = $orden->contacto->Rfc;
+
+        // Normalizar: eliminar espacios o guiones y convertir a mayúsculas
+        $receptor_rfc = strtoupper(str_replace([' ', '-'], '', $receptor_rfc));
+
+        // Validar formato RFC
+        $rfcValido = "/^[A-Z0-9]{12,13}$/";
+
+        if (!preg_match($rfcValido, $receptor_rfc)) {
+            $message = 'Por favor, verifica el Rfc. En el caso de que sea una persona física, este campo debe contener una longitud de 13 posiciones, si se trata de personas morales debe contener una longitud de 12 posiciones.';
+
+            return response()->json([
+                'success' => false,
+                'message' => $message
+            ], 404);
+        }
+
+        // --- Razón social ---
+        $receptor_razon_social = strtoupper($orden->contacto->Nombre);
+
+        // --- Régimen fiscal ---
+        $regimen_fiscal = Cfdi40RegimenFiscal::
+            where('id', $orden->contacto->RegimenFiscalReceptor)
+            ->first();
+
+        if (!$regimen_fiscal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El Régimen fiscal que ingresaste *'.$orden->contacto->RegimenFiscalReceptor.'* no está disponible en nuestro catálogo. Por favor, intenta ingresar un Régimen fiscal diferente.'
+            ], 404);
+        }
+
+        $receptor_regimen_fiscal = $regimen_fiscal->id;
+
+        // --- Uso de CFDI ---
+
+        $uso_cfdi = Cfdi40UsoCfdi::
+            where('id_aux', $orden->contacto->UsoCFDI)
+            ->first();
+
+        if (!$uso_cfdi) {
+            return response()->json([
+                'success' => false,
+                'message'=>'El Uso de CFDI que ingresaste *'.$orden->contacto->UsoCFDI.'* no está disponible en nuestro catálogo. Por favor, intenta ingresar un Uso de CFDI diferente.'
+            ], 404);
+        }
+
+        $receptor_uso_cfdi = $uso_cfdi->id_aux;
+
+        // --- Código Postal ---
+        $receptor_codigo_postal = str_replace([' ', '-'], '', $orden->contacto->DomicilioFiscalReceptor);
+
+        // Validar código postal
+        $cpValido = "/^[0-9]{5}$/";
+
+        if (!preg_match($cpValido, $receptor_codigo_postal)) {
+            $message = 'Por favor, verifica el Código Postal *'.$orden->contacto->DomicilioFiscalReceptor.'*. Este campo es el código postal del domicilio fiscal del receptor y debe contener una longitud de 5 posiciones.';
+            return response()->json([
+                'success' => false,
+                'message'=>$message
+            ], 404);
+        }
+
+        // --- Email ---
+        $receptor_email = $orden->contacto->Email;
+
+        // Validar sintaxis del email
+        if ($receptor_email && !filter_var($receptor_email, FILTER_VALIDATE_EMAIL)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El email del receptor no es válido. Verifica que tenga el formato correcto (usuario@dominio.com).'
+            ], 409);
+        }
+
+        // =============================
+        // DATOS DE LOS CONCEPTOS
+        // =============================
+
+        // --- Conceptos ---
+        $conceptos = $orden->detalles;
+        if (count($conceptos) == 0) {
+            return response()->json([
+                'success' => false,
+                'message'=>'Factura sin conceptos.'
+            ], 409);
+        }
+
+        // Verificar valores
+        for ($i=0; $i < count($conceptos); $i++) { 
+
+            // --- Clave de Producto/Servicio ---
+            $concepto_clave_prod_serv = Cfdi40ProductoServicio::
+                where('id_aux', $conceptos[$i]->producto->ClaveProdServ)->first();
+
+            if (!$concepto_clave_prod_serv) {
+                return response()->json([
+                    'success' => false,
+                    'message'=>'La Clave de Producto/Servicio que ingresaste *'.$conceptos[$i]->producto->ClaveProdServ.'* no está disponible en nuestro catálogo. Por favor, intenta ingresar una Clave de Producto/Servicio diferente.'
+                ], 409);
+            }
+
+            // --- Clave de Unidad ---
+            $concepto_clave_unidad = Cfdi40ClaveUnidad::
+                where('id_aux', $conceptos[$i]->producto->ClaveUnidad)
+                ->first();
+
+            if (!$concepto_clave_unidad) {
+                return response()->json([
+                    'success' => false,
+                    'message'=>'La Clave de Unidad que ingresaste *'.$conceptos[$i]->producto->ClaveUnidad.'* no está disponible en nuestro catálogo. Por favor, intenta ingresar una Clave de Unidad diferente.'
+                ], 409);
+            }
+
+            // --- Limpieza de descripción ---
+            $descripcionSinAcentos = iconv('UTF-8', 'ASCII//TRANSLIT', $conceptos[$i]->producto_nombre);
+            $descripcionSinAcentos = preg_replace('/[^A-Za-z0-9 ]/', '', $descripcionSinAcentos);
+            $conceptos[$i]->descripcion = $descripcionSinAcentos;
+
+            // --- Ajuste de valores ---
+            // Usamos 4 decimales como lo indicaste
+            $conceptos[$i]->cantidad = round($conceptos[$i]->cantidad, 4);
+            $conceptos[$i]->valor_unitario = round($conceptos[$i]->precio_unitario, 4);
+            $conceptos[$i]->importeConcepto = round($conceptos[$i]->cantidad * $conceptos[$i]->valor_unitario, 4);
+
+            $conceptos[$i]->clave_prod_serv = $concepto_clave_prod_serv->id_aux;
+            $conceptos[$i]->clave_unidad = $concepto_clave_unidad->id_aux; 
+            $conceptos[$i]->unidad = $concepto_clave_unidad->texto;
+
+            $conceptos[$i]->Descuento = $conceptos[$i]->descuento ? round($conceptos[$i]->descuento, 4) : 0;
+            $conceptos[$i]->ObjetoImp = ($conceptos[$i]->porcentaje_impuesto > 0) ? 1 : 0;
+            $conceptos[$i]->ObjetoImpRet = ($orden->retenciones == 'Con retenciones') ? 1 : 0;
+            // $conceptos[$i]->producto_id = null;
+ 
+        }
+
+        // Inicializar totales
+        $TotalImpuestosTrasladados = 0;
+        $TotalImpuestosRetenidos = 0;
+        $TotalImpuestosRetenidosIva = 0;
+        $TotalImpuestosRetenidosIsr = 0;
+        $totalDescuentos = 0;
+        $subtotal = 0;
+
+        // Se agregan los conceptos
+        for ($i=0; $i < count($orden->detalles); $i++) { 
+            $concepto = $orden->detalles[$i];
+
+            // Usamos 4 decimales como lo indicaste
+            $cantidad = $concepto->cantidad;
+            $valorUnitario = $concepto->valor_unitario;
+            $importeConcepto = round($cantidad * $valorUnitario, 4);
+            $descuentoConcepto = $concepto->Descuento;
+            // $descuentoConcepto = 0;
+
+            $datos['conceptos'][$i]['cantidad'] = $cantidad;
+            // $datos['conceptos'][$i]['unidad'] = $concepto->Unidad;
+            $datos['conceptos'][$i]['descripcion'] = $concepto->descripcion;
+            $datos['conceptos'][$i]['valorunitario'] = $valorUnitario;
+            $datos['conceptos'][$i]['importe'] = $importeConcepto;
+            
+            if ($descuentoConcepto > 0) {
+                $datos['conceptos'][$i]['Descuento'] = $descuentoConcepto;
+                $totalDescuentos += $descuentoConcepto;
+            }
+
+            $datos['conceptos'][$i]['ClaveProdServ'] = $concepto->clave_prod_serv;
+            $datos['conceptos'][$i]['ClaveUnidad'] = $concepto->clave_unidad;
+
+            // La Base del cálculo del impuesto es el importe del concepto menos su descuento.
+            $Base = $importeConcepto - $descuentoConcepto;
+            $subtotal += $importeConcepto;
+
+            if ($concepto->ObjetoImp == 1) {
+                $datos['conceptos'][$i]['ObjetoImp'] = '02'; // Sí objeto de impuesto
+
+                // Cálculo y redondeo del IVA
+                $ImporteIVA = round($Base * 0.16, 4);
+                $TotalImpuestosTrasladados += $ImporteIVA;
+
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Base'] = round($Base, 4);
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Impuesto'] = '002'; // IVA
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TipoFactor'] = 'Tasa';
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['TasaOCuota'] = '0.160000';
+                $datos['conceptos'][$i]['Impuestos']['Traslados'][0]['Importe'] = $ImporteIVA;
+                
+                // Lógica para las retenciones
+                if ($concepto->ObjetoImpRet == 1) {
+                    $retencionIva = round($Base * ($TasaIva / 100), 4);
+                    $retencionIsr = round($Base * ($TasaIsr / 100), 4);
+
+                    $TotalImpuestosRetenidosIva += $retencionIva;
+                    $TotalImpuestosRetenidosIsr += $retencionIsr;
+
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Base'] = round($Base, 4);
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Impuesto'] = '002';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TipoFactor'] = 'Tasa';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['TasaOCuota'] = number_format($TasaIva / 100, 6, '.', '');
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][0]['Importe'] = $retencionIva;
+
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Base'] = round($Base, 4);
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Impuesto'] = '001';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TipoFactor'] = 'Tasa';
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['TasaOCuota'] = number_format($TasaIsr / 100, 6, '.', '');
+                    $datos['conceptos'][$i]['Impuestos']['Retenciones'][1]['Importe'] = $retencionIsr;
+                }
+            } else {
+                $datos['conceptos'][$i]['ObjetoImp'] = '01'; // No objeto de impuesto
+            }
+        }
+
+        // Aquí se asignan los totales de la factura con 2 decimales
+        $datos['factura']['subtotal'] = round($subtotal, 2);
+        $datos['factura']['descuento'] = round($totalDescuentos, 2);
+        $datos['factura']['total'] = round($datos['factura']['subtotal'] - $datos['factura']['descuento'] + $TotalImpuestosTrasladados - ($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr), 2);
+        
+        // Impuestos globales para el XML, redondeados a 2 decimales
+        if ($TotalImpuestosTrasladados > 0 || $TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+            $datos['impuestos']['TotalImpuestosTrasladados'] = round($TotalImpuestosTrasladados, 2);
+            
+            if ($TotalImpuestosRetenidosIva > 0 || $TotalImpuestosRetenidosIsr > 0) {
+                // $datos['impuestos']['TotalImpuestosRetenidos'] = round($TotalImpuestosRetenidosIva + $TotalImpuestosRetenidosIsr, 2);
+                $datos['impuestos']['TotalImpuestosRetenidos'] = round(round($TotalImpuestosRetenidosIva, 2) + round($TotalImpuestosRetenidosIsr, 2), 2);
+            }
+        
+            // A nivel de Comprobante, el SAT exige que la Base de los traslados
+            // sea la suma de las bases de los conceptos con el mismo impuesto y tipo de factor.
+            $datos['impuestos']['translados'][0]['Base'] = round($subtotal - $totalDescuentos, 2); // Base total
+            $datos['impuestos']['translados'][0]['impuesto'] = '002';
+            $datos['impuestos']['translados'][0]['tasa'] = '0.160000';
+            $datos['impuestos']['translados'][0]['importe'] = round($TotalImpuestosTrasladados, 2);
+            $datos['impuestos']['translados'][0]['TipoFactor'] = 'Tasa';
+
+            if ($TotalImpuestosRetenidosIva > 0) {
+                $datos['impuestos']['retenciones'][0]['impuesto'] = '002';
+                $datos['impuestos']['retenciones'][0]['importe'] = round($TotalImpuestosRetenidosIva, 2);
+            }
+
+            if ($TotalImpuestosRetenidosIsr > 0) {
+                $datos['impuestos']['retenciones'][1]['impuesto'] = '001';
+                $datos['impuestos']['retenciones'][1]['importe'] = round($TotalImpuestosRetenidosIsr, 2);
+            }
+        }
+
+        $pedidoCurso = CfdiComprobante::
+            where('emisor_id',$empresa->id)
+            ->where('status', 0)
+            ->with('receptor')
+            //->with('conceptos')
+            ->with(['conceptos' => function ($query){
+                $query->with('mi_clave_prod_serv')
+                    ->with('mi_clave_unidad');
+            }])
+            ->with('impuesto')
+            ->with('timbre_fiscal_digital')
+            ->with('archivo')
+            ->with('mi_forma_pago')
+            ->with('mi_metodo_pago')
+            ->first();   
+
+        //elimino cotizacion curso desde el panel en caso de que tenga
+        if($pedidoCurso){
+            for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
+                $pedidoCurso->conceptos[$i]->delete();
+            }
+            $pedidoCurso->receptor->delete();
+            $pedidoCurso->delete();
+        } 
+
+        //Iniciar proceso de facturacion
+        // $Folio = (CfdiComprobante::count())+1;
+
+        // $Serie = (CfdiComprobante::
+        //     where('emisor_id',$empresa->id)
+        //     ->count())+1;
+
+        $contador = (CfdiComprobante::
+            where('emisor_id',$empresa->id)
+            ->count())+1;
+
+        $Folio = strtoupper("F0".$cliente->id."0".$empresa->id."0".$contador);
+        $Serie = strtoupper("A0".$cliente->id."0".$empresa->id."0".$contador);
+
+        //crear un pedido nuevo en curso
+        $pedidoCurso=CfdiComprobante::create([
+            'emisor_id'=>$empresa->id,
+            'receptor_id'=>null,
+            'status'=>0,
+            'flag_cancelada'=>null,
+            // 'Serie'=>"S-".$empresa->id."-".$Serie,
+            // 'Folio'=>"F-".$empresa->id."-".$Folio,
+            'Serie'=>$Serie,
+            'Folio'=>$Folio,
+            'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
+            'Sello'=>"",
+            'FormaPago'=>$comprobante_forma_pago,
+            'NoCertificado'=>"",
+            'Certificado'=>"",
+            'CondicionesDePago'=>"",
+            'Subtotal'=>$datos['factura']['subtotal'],
+            'Descuento'=>$datos['factura']['descuento'],
+            'Moneda'=>"MXN",
+            'TipoCambio'=>"",
+            'Total'=>$datos['factura']['total'],
+            'TipoDeComprobante'=>"I",
+            'Exportacion'=>"01",
+            'MetodoPago'=>$MetodoPago,
+            'LugarExpedicion'=>$empresa->CP,
+            'Confirmacion'=>"",
+            'TasaIva'=>$TasaIva,
+            'TasaIsr'=>$TasaIsr,
+            'Tipo'=>$Tipo,
+        ]);
+
+        //crear el receptor
+        $newObjReceptor=CfdiReceptor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$receptor_rfc,
+            'Nombre'=>$receptor_razon_social,
+            'DomicilioFiscalReceptor'=>$receptor_codigo_postal,
+            'ResidenciaFiscal'=>null,
+            'NumRegIdTrib'=>null,
+            'RegimenFiscalReceptor'=>$receptor_regimen_fiscal,
+            'UsoCFDI'=>$receptor_uso_cfdi,
+            'Email'=>$receptor_email,
+        ]);
+
+        //Crear los conceptos
+        for ($i=0; $i < count($conceptos); $i++) { 
+            //agregar nuevo concepto
+            $nuevoConcepto=CfdiConcepto::create([
+                'comprobante_id' => $pedidoCurso->id,
+                'ClaveProdServ' => $conceptos[$i]->clave_prod_serv,
+                'NoIdentificacion' => "",
+                'Cantidad' => $conceptos[$i]->cantidad,
+                'ClaveUnidad' => $conceptos[$i]->clave_unidad,
+                'Unidad' => $conceptos[$i]->unidad,
+                'Descripcion' => $conceptos[$i]->descripcion,
+                'ValorUnitario' => $conceptos[$i]->valor_unitario,
+                'Importe' => $conceptos[$i]->importeConcepto,
+                'Descuento' => $conceptos[$i]->Descuento,
+                'ObjetoImp' => $conceptos[$i]->ObjetoImp,
+                'ObjetoImpRet' => $conceptos[$i]->ObjetoImpRet,
+                // 'producto_id' => $conceptos[$i]->producto_id,
+            ]);
+        }
+
+        $resTimbrado = $this->timbrarProduccion($pedidoCurso->id);
+
+        if($resTimbrado != 1){
+
+            $pedidoCurso = CfdiComprobante::
+                where('emisor_id',$empresa->id)
+                ->where('status', 0)
+                ->with('receptor')
+                //->with('conceptos')
+                ->with(['conceptos' => function ($query){
+                    $query->with('mi_clave_prod_serv')
+                        ->with('mi_clave_unidad');
+                }])
+                ->with('impuesto')
+                ->with('timbre_fiscal_digital')
+                ->with('archivo')
+                ->with('mi_forma_pago')
+                ->with('mi_metodo_pago')
+                ->first();   
+
+            //elimino cotizacion curso desde el panel en caso de que tenga
+            if($pedidoCurso){
+                for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
+                    $pedidoCurso->conceptos[$i]->delete();
+                }
+                $pedidoCurso->receptor->delete();
+                $pedidoCurso->delete();
+            }
+
+            $message = $resTimbrado;
+
+            return response()->json([
+                'success' => false,
+                'message'=>$message
+            ], 500);
+
+        }else{
+
+            //Timbrada exitosamente
+            $pedidoCurso->status = 1;
+            $pedidoCurso->save();
+
+            $orden->facturada = 1;
+            $orden->comprobante_id = $pedidoCurso->id;
+            $orden->save();
+
+            $count_facturas = $cliente->count_facturas + 1;
+            DB::table('users')
+            ->where('id', $cliente->id)
+            ->update([
+                'count_facturas' => $count_facturas,
+            ]);
+
+            //descontar contador de timbres disponibles
+            $count_timbres = $cliente->count_timbres - 1;
+            DB::table('users')
+            ->where('id', $cliente->id)
+            ->update([
+                'count_timbres' => $count_timbres,
+            ]);
+
+            $document = $this->facturaPdf($pedidoCurso->id);
+
+            DB::table('cfdi_archivos')
+                ->where('comprobante_id', $pedidoCurso->id)
+                ->update([
+                    'pdf' => $document,
+                ]);
+
+            $orden->pdf = $document;
+            $orden->save();
+
+            //crear o actualizar cliente
+            $clienteExiste = CfdiCliente::noEliminados()
+                ->where('empresa_id',$empresa->id)
+                ->where('Rfc', $receptor_rfc)
+                ->with('mi_regimen_fiscal')
+                ->with('mi_uso_cfdi')
+                ->first();
+
+            if(!$clienteExiste){
+                $newCliente=CfdiCliente::create([
+                    'empresa_id'=>$empresa->id,
+                    'status'=>true,
+                    'Rfc'=>$receptor_rfc,
+                    'Nombre'=>$receptor_razon_social,
+                    'DomicilioFiscalReceptor'=>$receptor_codigo_postal,
+                    'ResidenciaFiscal'=>null,
+                    'NumRegIdTrib'=>null,
+                    'RegimenFiscalReceptor'=>$receptor_regimen_fiscal,
+                    'UsoCFDI'=>$receptor_uso_cfdi,
+                    'Email'=>$receptor_email,
+                    'user_id'=>$empresa->user_id,
+                    'origen'=>'pos',
+                ]);
+            }else if($clienteExiste){
+                $clienteExiste->Nombre = $receptor_razon_social;
+                $clienteExiste->DomicilioFiscalReceptor = $receptor_codigo_postal;
+                $clienteExiste->RegimenFiscalReceptor = $receptor_regimen_fiscal;
+                $clienteExiste->UsoCFDI = $receptor_uso_cfdi;
+                $clienteExiste->Email = $receptor_email;
+                $clienteExiste->save();
+            }
+
+            try {
+                $this->emailFactura($pedidoCurso->id); 
+            } catch (Exception $e) {
+                
+            }
+
+            return response()->json([
+                'success' => true,
+                'message'=>'Factura timbrada exitosamente.',
+                'factura_id'=>$pedidoCurso->id,
+                'factura_pdf'=>$document
+            ], 200);
+        }
+
+
+        // return response()->json([
+        //     'success' => true,
+        //     'forma_pago'=> $forma_pago,
+        //     'comprobante_forma_pago'=>$comprobante_forma_pago,
+        //     'metodo_pago'=>$MetodoPago,
+        //     'tipo_factura'=>$Tipo,
+        //     'tasa_iva'=>$TasaIva,
+        //     'tasa_isr'=>$TasaIsr,
+        //     'data' => $orden,
+        //     'factura_data' => $datos
+        // ]);
+    }
+
+    /*Cancela una venta generada desde el POS*/
+    public function cancelarVenta(Request $request, $venta_id)
+    {
+
+        $orden = PosOrder::with('detalles.producto')->find($venta_id);
+
+        if (!$orden) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Orden no encontrada.'
+            ], 404);
+        }
+
+        if ($orden->status === 'cancelada') {
+            return response()->json([
+                'success' => false,
+                'message' => 'La orden ya está cancelada'
+            ], 400);
+        }
+
+        // 1. Si está facturada, intentar primero con el SAT
+        if ($orden->facturada) {
+            
+            $cliente = User::whereNull('flag_eliminado')
+                ->where('id', $orden->user_id)
+                ->with('cfdi_empresa')
+                ->first();
+
+            if (!$cliente)
+            {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Usuario no encontrado.'
+                ], 404);
+            }
+
+            if (!$cliente->cfdi_empresa)
+            {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Empresa no encontrada.'
+                ], 404);
+            }
+
+            $empresa = $cliente->cfdi_empresa;
+
+            // --- Validar datos de Emisor ---
+            $camposRequeridosEmisor = [
+                'Rfc', 'RazonSocial', 'RegimenFiscal',
+                'CP', 'cer', 'key', 'pass'
+            ];
+
+            foreach ($camposRequeridosEmisor as $campo) {
+                if (empty($empresa->$campo)) {
+                    $message = 'Para cancelar una factura, primero debes configurar tus datos de emisor.';
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => $message
+                    ], 409);
+                }
+            }
+
+            // Preparamos un Request "falso" para reutilizar función existente
+            $requestCancelacion = new Request();
+            $requestCancelacion->replace(['motivo' => $request->motivo_cfdi]);
+
+            // Llamamos a la función y capturamos la respuesta
+            $respuestaSat = $this->cancelarFactura($requestCancelacion, $orden->comprobante_id);
+            
+            // El método original devuelve un objeto JsonResponse
+            // Obtenemos el contenido y el código de estado
+            $datosSat = $respuestaSat->getData();
+            
+            if ($respuestaSat->getStatusCode() !== 200) {
+                // Si el SAT falló, retornamos el error tal cual vino del SAT
+                return response()->json([
+                    'success' => false,
+                    'message' => $datosSat->error ?? 'Error al cancelar ante el SAT'
+                ], $respuestaSat->getStatusCode());
+            }
+
+        }
+
+        // 2. Si llegamos aquí, o no estaba facturada o la cancelación SAT fue exitosa
+        try {
+            DB::transaction(function () use ($orden, $request) {
+                // Marcar la orden como cancelada (usando tu método del modelo)
+                $orden->cancelar($request->motivo_cancelacion);
+
+                foreach ($orden->detalles as $detalle) {
+                    // Solo productos físicos
+                    if(!$detalle->producto->is_service){
+                        InventoryService::adjustStock(
+                            $detalle->producto->id,
+                            $detalle->cantidad,
+                            'ajuste_positivo',
+                            PosOrder::class,
+                            $orden->id,
+                            $orden->user_id,
+                            'Venta ' . $orden->folio . ' cancelada'
+                        );
+                    }
+                }
+            });
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al procesar la cancelación en el sistema: ' . $e->getMessage()
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Venta cancelada correctamente.'
+        ]);
+        
     }
 
     

@@ -55,6 +55,7 @@ class User extends Authenticatable implements JWTSubject
         'pdf_id',
         'pdf_url',  
         'imagen',
+        'aviso_privacidad',
         'flag_eliminado',    
     ];
 
@@ -128,6 +129,14 @@ class User extends Authenticatable implements JWTSubject
     public function settings()
     {
         return $this->hasOne(UserSetting::class);
+    }
+
+    // --- Helpers ---
+    public static function buscarPorId($userId)
+    {
+        return self::where('id', $userId)
+            ->whereNull('flag_eliminado')
+            ->first();
     }
 
     

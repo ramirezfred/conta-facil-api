@@ -397,6 +397,24 @@ class GraficasController extends Controller
              ->whereYear('created_at', $anio)
              ->whereNull('flag_eliminado') // Ignorar eliminados
              ->sum('total');
+
+        $total_facturado = 0;
+        $usuario = User::with('cfdi_empresa')->find($userId);
+        if($usuario->cfdi_empresa){
+            $total_facturado = CfdiComprobante::
+                //where(DB::raw('DAY(created_at)'),$dia_actual)
+                where(DB::raw('MONTH(created_at)'),$mes)
+                ->where(DB::raw('YEAR(created_at)'),$anio)
+                ->where('emisor_id',$usuario->cfdi_empresa->id)
+                ->where(function ($query) {
+                    $query
+                        ->where('status',1)
+                        /*->orWhere('status',2)*/;
+                })
+                ->sum('Total');
+        }
+
+        $ingresosReales += $total_facturado;
      
          $gastosReales = Gasto::where('user_id', $userId)
              ->whereMonth('created_at', $mes)
