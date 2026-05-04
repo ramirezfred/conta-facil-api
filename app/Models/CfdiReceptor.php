@@ -39,8 +39,6 @@ class CfdiReceptor extends Model
         'Email',
     ];
 
-    //dalle bandera para controlar si esta activa la generacion de imagenes con dalle
-
     /**
      * The attributes excluded from the model's JSON form.
      *

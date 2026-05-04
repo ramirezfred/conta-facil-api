@@ -103,6 +103,9 @@ Route::get('pruebas/set_timbres_user', [PruebasController::class, 'setTimbresUse
 
 Route::get('cfdi/factura_pdf/{factura_id}', [FacturaController::class, 'facturaPdf']);
 Route::get('cfdi/timbrar_prueba/{user_id}', [FacturaController::class, 'timbrarFacturaDePrueba']);
+Route::get('cfdi/migrar_emisores/legacy', [FacturaController::class, 'migrarEmisoresLegacy']);
+Route::get('cfdi/migrar_productos/legacy', [FacturaController::class, 'migrarProductosLegacy']);
+Route::get('cfdi/eliminar_empresas/legacy', [FacturaController::class, 'eliminarEmpresasLegacy']);
 
 //----Pruebas DashboardController
 Route::get('dashboard/cat_usuarios', [DashboardController::class, 'getCatalogoUsers']);
@@ -119,8 +122,8 @@ Route::get('ingresos/set_pdf/{id}', [IngresoController::class, 'ingresoPdf']);
 // Route::get('timbrado/set_flag_algoritmo_factura', [TimbradoController::class, 'setFlagAlgoritmoFactura']);
 // Route::get('timbrado/aplicar_algoritmo_factura', [TimbradoController::class, 'aplicarAlgoritmoFactura']);
 
-
 Route::get('cfdi_empresa/get_emisor/{user_id}', [CfdiEmpresaController::class, 'showUserEmisor']);
+
 
 //----Pruebas ReporteController
 Route::get('reportes/estado_cuenta/{user_id}', [ReporteController::class, 'estadoDeCuenta']);
@@ -215,9 +218,15 @@ Route::group(['middleware' => ['jwt.verify']], function() {
     //----Pruebas CfdiEmpresaController
     Route::put('cfdi_empresa/{user_id}', [CfdiEmpresaController::class, 'updateUserEmisor']);
     Route::post('cfdi_empresa/link_archivo/{ext}', [CfdiEmpresaController::class, 'storeArchivo']);
-    //Route::get('cfdi_empresa/get_emisor/{user_id}', [CfdiEmpresaController::class, 'showUserEmisor']);
     Route::get('cfdi_empresa/get_producto_emisor/{user_id}', [CfdiEmpresaController::class, 'showProductoEmisor']);
     Route::put('cfdi_empresa/put_producto_emisor/{producto_id}', [CfdiEmpresaController::class, 'updateProductoEmisor']);
+    //----Nuevos endpoints
+    Route::post('cfdi_empresa', [CfdiEmpresaController::class, 'store']);
+    Route::get('cfdi_empresa', [CfdiEmpresaController::class, 'index']);
+    Route::get('cfdi_empresa/{id}', [CfdiEmpresaController::class, 'show']);
+    Route::delete('cfdi_empresa/{id}', [CfdiEmpresaController::class, 'destroy']);
+    Route::post('cfdi_empresa/{id}', [CfdiEmpresaController::class, 'update']);
+    Route::post('cfdi_empresa/set_functionality/{id}', [CfdiEmpresaController::class, 'setFunctionalityEmisor']);
 
     //----Pruebas FacturaController
     Route::get('cfdi/get_cliente_empresa/{cliente_id}', [FacturaController::class, 'getClienteEmpresa']);

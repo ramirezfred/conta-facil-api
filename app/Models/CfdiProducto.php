@@ -28,6 +28,7 @@ class CfdiProducto extends Model
      * @var array
      */
     protected $fillable = [
+        'user_id',
         'empresa_id',
         'ClaveProdServ',
         'NoIdentificacion',
@@ -71,6 +72,7 @@ class CfdiProducto extends Model
     protected $casts = [
         'created_at' => 'datetime:Y-m-d H:i:s',
         'updated_at' => 'datetime:Y-m-d H:i:s',
+        'user_id' => 'integer',
         'empresa_id' => 'integer',
         'Cantidad' => 'double',
         'ValorUnitario' => 'double',

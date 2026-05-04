@@ -90,7 +90,20 @@ class CrmContactController extends Controller
 
         if ($request->filled('user_id')) {
             $query->where('user_id', $request->user_id);
+
+            $empresa = CfdiEmpresa::
+                where('user_id',$request->user_id)
+                ->where('emisor_pos',1)
+                ->first();
+
+            if ($empresa)
+            {
+                $query->where('empresa_id', $empresa->id);
+            }
+
         }
+
+        
 
         $clientes = $query->orderBy('id', 'desc')->get();
 
@@ -124,6 +137,16 @@ class CrmContactController extends Controller
 
         if ($request->filled('user_id')) {
             $query->where('user_id', $request->user_id);
+
+            $empresa = CfdiEmpresa::
+                where('user_id',$request->user_id)
+                ->where('emisor_pos',1)
+                ->first();
+
+            if ($empresa)
+            {
+                $query->where('empresa_id', $empresa->id);
+            }
         }
 
         $clientes = $query->orderBy('id', 'desc')->get();
@@ -183,6 +206,7 @@ class CrmContactController extends Controller
 
         $empresa = CfdiEmpresa::
             where('user_id',$user->id)
+            ->where('emisor_pos',1)
             ->first();
 
         if (!$empresa)

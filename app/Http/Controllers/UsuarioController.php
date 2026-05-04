@@ -155,37 +155,11 @@ class UsuarioController extends Controller
 
         if($usuario->save()){
 
-            // $claveAdicional = config('app.lada_d');
-            // $cadenaEncriptada = Crypt::encrypt($request->input('pass'), $claveAdicional);
-
-            $count_empresas = CfdiEmpresa::count();
-
-            // Aseguramos que el número tenga un máximo de 8 dígitos
-            $folio_venta = str_pad($count_empresas+1, 8, '0', STR_PAD_LEFT);
-
-            //Crear la empresa emisora para las facturas
-            $nuevaEmpresa=CfdiEmpresa::create([
-                'user_id'=>$usuario->id,
-                'tipo_persona'=>null,
-                'Rfc'=>null,
-                'RazonSocial'=>null,
-                'RegimenFiscal'=>null,
-                'FacAtrAdquirente'=>null,
-                'CP'=>null,
-                'cer'=>null,
-                'key'=>null,
-                'pass'=>null,
-                'flag_descuento'=>0,
-                'flag_objetoImp'=>1,
-                'flag_retencion'=>0,
-                'flag_producto'=>0,
-                'folio_venta'=>$folio_venta,
-
-            ]);
-
-            //Crear el producto asociado a la empresa
+            //Crear el producto asociado al usuario 
+            // para su factura automática de ingresos contables
             $nuevoProducto=CfdiProducto::create([
-                'empresa_id'=>$nuevaEmpresa->id,
+                'user_id'=>$usuario->id,
+                'empresa_id'=>null,
                 'ClaveProdServ'=>null,
                 'NoIdentificacion'=>null,
                 'Cantidad'=>null,

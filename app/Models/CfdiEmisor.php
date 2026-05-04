@@ -5,16 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class CfdiEmpresa extends Model
+class CfdiEmisor extends Model
 {
     use HasFactory;
 
-    /**
+        /**
      * The database table used by the model.
      *
      * @var string
      */
-    protected $table = 'cfdi_empresas';
+    protected $table = 'cfdi_emisor';
 
     // Eloquent asume que cada tabla tiene una clave primaria con una columna llamada id.
     // Si éste no fuera el caso entonces hay que indicar cuál es nuestra clave primaria en la tabla:
@@ -28,31 +28,12 @@ class CfdiEmpresa extends Model
      * @var array
      */
     protected $fillable = [
-        'user_id',
-        'tipo_persona',
-        'id_cif',
+        'comprobante_id',
         'Rfc',
         'RazonSocial', //Nombre
         'RegimenFiscal',
-        'FacAtrAdquirente',
-        'CP',
-        'cer',
-        'key',
-        'pass',
-
-        'flag_descuento',
-        'flag_objetoImp',
-        'flag_retencion',
-        'flag_producto',
-
-        'folio_venta',
-        
-        'emisor_bot', //emisor establecido del bot
-        'emisor_pos', //emisor establecido del pos
-        'emisor_ingresos', //emisor establecido de la factura automatica de ingresos contables
-        
+        'CP', 
     ];
-
 
     /**
      * The attributes excluded from the model's JSON form.
@@ -69,35 +50,16 @@ class CfdiEmpresa extends Model
     protected $casts = [
         'created_at' => 'datetime:Y-m-d H:i:s',
         'updated_at' => 'datetime:Y-m-d H:i:s',
-        'user_id' => 'integer',
-        'tipo_persona' => 'integer',
-        'flag_descuento' => 'integer',
-        'flag_objetoImp' => 'integer',
-        'flag_retencion' => 'integer',
-        'flag_producto' => 'integer',
-        'emisor_bot' => 'boolean',
-        'emisor_pos' => 'boolean',
-        'emisor_ingresos' => 'boolean',
+        'comprobante_id' => 'integer',
     ];
 
-    public function user()
+    public function comprobante()
     {
-        return $this->belongsTo(User::class, 'user_id');
-    }
-
-    public function clientes()
-    {
-        return $this->hasMany(CfdiCliente::class, 'empresa_id');
+        return $this->belongsTo(CfdiComprobante::class, 'comprobante_id');
     }
 
     public function mi_regimen_fiscal()
     {
         return $this->belongsTo(Cfdi40RegimenFiscal::class, 'RegimenFiscal');
     }
-
-    public function producto()
-    {
-        return $this->hasOne(CfdiProducto::class, 'empresa_id');
-    }
-
 }

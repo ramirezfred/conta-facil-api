@@ -33,6 +33,9 @@ class CfdiEmpresasMigration extends Migration
             $table->integer('flag_retencion')->nullable();
             $table->integer('flag_producto')->nullable();
             $table->string('folio_venta')->nullable();
+            $table->boolean('emisor_bot')->default(false);
+            $table->boolean('emisor_pos')->default(false);
+            $table->boolean('emisor_ingresos')->default(false);
             $table->timestamps();
         });
     }

@@ -116,7 +116,9 @@ class WebhooksWhatsappController extends Controller
                                 (
                                     $type == 'document' && 
                                     $change['value']['messages'][0]['document']['mime_type'] != 'application/octet-stream' &&
-                                    $change['value']['messages'][0]['document']['mime_type'] != 'application/pkix-cert'
+                                    $change['value']['messages'][0]['document']['mime_type'] != 'application/pkix-cert' &&
+                                    $change['value']['messages'][0]['document']['mime_type'] != 'application/x-iwork-keynote-sffkey' &&
+                                    $change['value']['messages'][0]['document']['mime_type'] != 'application/x-x509-ca-cert'
                                 )
                             ){
 
@@ -239,35 +241,10 @@ class WebhooksWhatsappController extends Controller
                 
             ]);
 
-            //Crear la empresa emisora para las facturas
-            $count_empresas = CfdiEmpresa::count();
-
-            // Aseguramos que el número tenga un máximo de 8 dígitos
-            $folio_venta = str_pad($count_empresas+1, 8, '0', STR_PAD_LEFT);
-
-            //Crear la empresa emisora para las facturas
-            $nuevaEmpresa=CfdiEmpresa::create([
-                'user_id'=>$nuevoObj->id,
-                'tipo_persona'=>null,
-                'Rfc'=>null,
-                'RazonSocial'=>null,
-                'RegimenFiscal'=>null,
-                'FacAtrAdquirente'=>null,
-                'CP'=>null,
-                'cer'=>null,
-                'key'=>null,
-                'pass'=>null,
-                'flag_descuento'=>0,
-                'flag_objetoImp'=>1,
-                'flag_retencion'=>0,
-                'flag_producto'=>0,
-                'folio_venta'=>$folio_venta,
-
-            ]);
-
-            //Crear el producto asociado a la empresa
+            //Crear el producto asociado al usuario
             $nuevoProducto=CfdiProducto::create([
-                'empresa_id'=>$nuevaEmpresa->id,
+                'user_id'=>$nuevoObj->id,
+                'empresa_id'=>null,
                 'ClaveProdServ'=>null,
                 'NoIdentificacion'=>null,
                 'Cantidad'=>null,

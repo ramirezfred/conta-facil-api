@@ -28,6 +28,7 @@ class CfdiComprobante extends Model
      * @var array
      */
     protected $fillable = [
+        'user_id',
         'emisor_id',
         'receptor_id',
         'status', // 0 creando 1 creada 2 cancelada 3 creando desde panel
@@ -83,6 +84,7 @@ class CfdiComprobante extends Model
     protected $casts = [
         'created_at' => 'datetime:Y-m-d H:i:s',
         'updated_at' => 'datetime:Y-m-d H:i:s',
+        'user_id' => 'integer',
         'emisor_id' => 'integer',
         'receptor_id' => 'integer',
         'status' => 'integer',
@@ -105,6 +107,11 @@ class CfdiComprobante extends Model
     public function informacion_global()
     {
         return $this->hasOne(CfdiInformacionGlobal::class, 'comprobante_id');
+    }
+
+    public function emisor()
+    {
+        return $this->hasOne(CfdiEmisor::class, 'comprobante_id');
     }
 
     public function receptor()

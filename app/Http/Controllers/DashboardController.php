@@ -73,7 +73,8 @@ class DashboardController extends Controller
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('emisor_id',$usuario->cfdi_empresa->id)
+            // ->where('emisor_id',$usuario->cfdi_empresa->id)
+            ->where('user_id',$usuario->id)
             ->where('status',1)
             ->count();
 
@@ -81,7 +82,8 @@ class DashboardController extends Controller
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('emisor_id',$usuario->cfdi_empresa->id)
+            // ->where('emisor_id',$usuario->cfdi_empresa->id)
+            ->where('user_id',$usuario->id)
             ->where('status',2)
             ->count();
 
@@ -90,7 +92,8 @@ class DashboardController extends Controller
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('emisor_id',$usuario->cfdi_empresa->id)
+            // ->where('emisor_id',$usuario->cfdi_empresa->id)
+            ->where('user_id',$usuario->id)
             ->where(function ($query) {
                 $query
                     ->where('status',1)
@@ -109,7 +112,17 @@ class DashboardController extends Controller
             ->sum('total');
 
         $flag_puede_facturar = false;
-        $limite_facturacion = $this->determinarLimiteFacturacion($usuario->cfdi_empresa->Rfc,$usuario->cfdi_empresa->RegimenFiscal);
+        // $limite_facturacion = $this->determinarLimiteFacturacion($usuario->cfdi_empresa->Rfc,$usuario->cfdi_empresa->RegimenFiscal);
+
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $usuario->id)
+            ->first();
+
+        if($cfdi_empresa){
+            $limite_facturacion = $this->determinarLimiteFacturacion($cfdi_empresa->Rfc,$cfdi_empresa->RegimenFiscal);
+        }else{
+            $limite_facturacion = null;
+        }
 
         $puede_facturar = 0;
         $porcentaje_facturado = 0;
@@ -124,7 +137,7 @@ class DashboardController extends Controller
 
             $porcentaje_facturado = (($total + $total_por_facturar)*100)/$limite_facturacion;
 
-            $puede_facturar = number_format($puede_facturar, 0, '', ' ');
+            // $puede_facturar = number_format($puede_facturar, 0, '', ' ');
         }else{
 
             /*Los users q no tienen limite se va a mostrar es el total facturado*/
@@ -151,15 +164,15 @@ class DashboardController extends Controller
 
         return response()->json([
 
-            'cfdi_Empresa_id'=>$usuario->cfdi_empresa->id,
-            'cfdi_Rfc'=>$usuario->cfdi_empresa->Rfc,
-            'cfdi_RazonSocial'=>$usuario->cfdi_empresa->RazonSocial,
-            'cfdi_CP'=>$usuario->cfdi_empresa->CP,
-            'cfdi_id_cif'=>$usuario->cfdi_empresa->id_cif,
+            'cfdi_Empresa_id'=>$cfdi_empresa ? $cfdi_empresa->id : null,
+            'cfdi_Rfc'=>$cfdi_empresa ? $cfdi_empresa->Rfc : null,
+            'cfdi_RazonSocial'=>$cfdi_empresa ? $cfdi_empresa->RazonSocial : null,
+            'cfdi_CP'=>$cfdi_empresa ? $cfdi_empresa->CP : null,
+            'cfdi_id_cif'=>$cfdi_empresa ? $cfdi_empresa->id_cif : null,
 
             'emitidas'=>$emitidas,
             'canceladas'=>$canceladas,
-            'total'=>$total,
+            'total' => number_format($total, 2, '.', ''),
 
             'user_id'=>$usuario->id,
             'user_nombre'=>$usuario->nombre,
@@ -168,10 +181,10 @@ class DashboardController extends Controller
 
             'flag_puede_facturar'=>$flag_puede_facturar,
             //'puede_facturar'=>sprintf('%.2f',$puede_facturar),
-            'puede_facturar'=>$puede_facturar,
+            'puede_facturar'=>number_format($puede_facturar, 2, '.', ''),
             'porcentaje_facturado'=>$porcentaje_facturado,
-            'total_gastos'=>$total_gastos,
-            'total_ingresos_contables'=>$total_ingresos_contables + $total,
+            'total_gastos'=>number_format($total_gastos, 2, '.', ''),
+            'total_ingresos_contables'=>number_format($total_ingresos_contables + $total, 2, '.', ''),
             'count_timbres'=>$usuario->count_timbres,
 
         ], 200);
@@ -402,16 +415,6 @@ class DashboardController extends Controller
             return response()->json(['error'=>'Cliente no encontrado'], 404);
         }
 
-        $emisor = CfdiEmpresa::
-            where('user_id', $cliente_id)
-            ->first();
-
-        if (!$emisor)
-        {
-            // Devolvemos error codigo http 404
-            return response()->json(['error'=>'Emisor no encontrado'], 404);
-        }
-
 
         $anio = $request->input('anio');
         $mes = $request->input('mes');
@@ -430,7 +433,7 @@ class DashboardController extends Controller
 
         //facturas en emitidas y canceladas
         $facturas = CfdiComprobante::select('id','emisor_id','status','Serie','Folio','Fecha','Total','created_at')
-            ->where('emisor_id',$emisor->id)
+            ->where('user_id',$cliente_id)
             ->where(function ($query) {
                 $query
                     ->where('status',1)
@@ -563,11 +566,6 @@ class DashboardController extends Controller
             ->where(function ($query) use ($termino) {
                 $query->where("email", "like", '%'.$termino.'%')
                     ->orWhere("nombre", "like", '%'.$termino.'%')
-                    // ->orWhere(function ($query) use ($termino) {
-                    //     $query->whereHas('cfdi_empresa', function ($query) use ($termino) {
-                    //         $query->where("Rfc", "like", '%'.$termino.'%');
-                    //     });
-                    // });
                     ->orWhereHas('cfdi_empresa', function ($query) use ($termino) {
                         $query->where('Rfc', 'like', '%' . $termino . '%');
                     });
@@ -575,6 +573,7 @@ class DashboardController extends Controller
             ->with(['cfdi_empresa' => function ($query) {
                 $query->select('id', 'user_id', 'Rfc');
             }])
+            ->whereHas('cfdi_empresa')
             ->get();
 
 

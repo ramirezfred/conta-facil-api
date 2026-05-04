@@ -336,7 +336,6 @@ class PosOrderController extends Controller
         // $user = User::buscarPorId($request->input('user_id'));
         $user = User::whereNull('flag_eliminado')
             ->where('id', $request->input('user_id'))
-            ->with('cfdi_empresa')
             ->first();
         if (!$user)
         {
@@ -355,15 +354,20 @@ class PosOrderController extends Controller
             ], 400);
         }
 
-        if (!$user->cfdi_empresa)
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $user->id)
+            ->where('emisor_pos', true)
+            ->first();
+
+        if (!$cfdi_empresa)
         {
             return response()->json([
                 'success' => false,
-                'message'=>'Empresa no encontrada.'
+                'message' => 'Para crear una venta, primero debes configurar tus datos de emisor y activar la función POS al emisor.'
             ], 404);
         }
 
-        $empresa = $user->cfdi_empresa;
+        $empresa = $cfdi_empresa;
 
         // --- Validar datos de Emisor ---
         $camposRequeridosEmisor = [

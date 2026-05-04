@@ -75,25 +75,19 @@ class FacturaRecurrenteController extends Controller
             return response()->json(['error'=>'Usuario no encontrado'], 404);
         }
 
-        // $factura = CfdiComprobante::
-        //     with(['receptor' => function ($query){
-        //         $query->with('mi_regimen_fiscal')
-        //             ->with('mi_uso_cfdi');
-        //     }])
-        //     ->with(['conceptos' => function ($query){
-        //         $query->with('mi_clave_prod_serv')
-        //             ->with('mi_clave_unidad');
-        //     }])
-        //     ->with('impuesto')
-        //     ->with('timbre_fiscal_digital')
-        //     ->with('archivo')
-        //     ->with('mi_forma_pago')
-        //     ->with('mi_metodo_pago')
-        //     ->find($factura_id);
+        $factura = CfdiComprobante::find($factura_id);
 
-        // if(!$factura){
-        //     return response()->json(['error'=>'Factura no encontrada.'],404);
-        // }
+        if(!$factura){
+            return response()->json(['error'=>'Factura no encontrada.'],404);
+        }
+
+        $emisor = CfdiEmpresa::
+            with('mi_regimen_fiscal')
+            ->find($factura->emisor_id);
+
+        if(!$emisor){
+            return response()->json(['error'=>'Emisor no encontrado.'],404);
+        }
 
         //frecuencia 1=una_vez 2=semanal 3=mensual
 

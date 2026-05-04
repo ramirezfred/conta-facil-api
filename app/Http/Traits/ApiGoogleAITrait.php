@@ -1268,7 +1268,12 @@ trait ApiGoogleAITrait
         // =============================
         // LISTA DE MODELOS A PROBAR
         // =============================
-        $models = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
+        $models = $models = [
+            'gemini-2.5-flash', 
+            'gemini-2.5-pro', 
+            'gemini-2.0-flash', 
+            'gemini-2.5-flash-lite'
+        ];
 
         // =============================
         // INTENTAR CON CADA API KEY
@@ -1679,7 +1684,12 @@ trait ApiGoogleAITrait
         // =============================
         // LISTA DE MODELOS A PROBAR
         // =============================
-        $models = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
+        $models = [
+            'gemini-2.5-flash', 
+            'gemini-2.5-pro', 
+            'gemini-2.0-flash',
+            'gemini-2.5-flash-lite'
+        ];
 
         // =============================
         // INTENTAR CON CADA API KEY

@@ -26,6 +26,7 @@ use App\Models\Ingreso;
 use App\Models\IngresoConcepto;
 use App\Models\CfdiComprobante;
 use App\Models\IngresoRecurrente;
+use App\Models\CfdiEmpresa;
 
 date_default_timezone_set('America/Mexico_City');
 
@@ -86,15 +87,6 @@ class IngresoController extends Controller
             ],422);
         }
 
-        $obj = User::whereNull('flag_eliminado')
-            ->with('cfdi_empresa')
-            ->find($request->input('user_id'));
-        if (!$obj)
-        {
-            // Devolvemos error codigo http 404
-            return response()->json(['error'=>'Usuario no encontrado'], 404);
-        }
-
         //Si el ingreso es contable, Validacion para user resico
         // if($request->input('tipo_id') == 1 && $obj->cfdi_empresa && $obj->cfdi_empresa->RegimenFiscal == '626'){
         //     $total_facturado = $this->getTotalFacturado($obj->id);
@@ -106,12 +98,17 @@ class IngresoController extends Controller
         //     }
         // }
 
-        if($request->input('tipo_id') == 1 && $obj->cfdi_empresa){
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $request->input('user_id'))
+            ->where('emisor_ingresos', true)
+            ->first();
 
-            $limite_facturacion = $this->determinarLimiteFacturacion($obj->cfdi_empresa->Rfc,$obj->cfdi_empresa->RegimenFiscal);
+        if($request->input('tipo_id') == 1 && $cfdi_empresa){
+
+            $limite_facturacion = $this->determinarLimiteFacturacion($cfdi_empresa->Rfc,$cfdi_empresa->RegimenFiscal);
             if($limite_facturacion != null && $limite_facturacion != 0){
 
-                $total_facturado = $this->getTotalFacturado($obj->id);
+                $total_facturado = $this->getTotalFacturado($request->input('user_id'));
 
                 if($total_facturado >= $limite_facturacion){
                     return response()->json(['error'=>'Ya alcanzaste el límite de $'.$limite_facturacion.' pesos mensuales facturables.'], 409);
@@ -284,7 +281,7 @@ class IngresoController extends Controller
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('emisor_id',$usuario->cfdi_empresa->id)
+            ->where('user_id',$user_id)
             ->where(function ($query) {
                 $query
                     ->where('status',1)

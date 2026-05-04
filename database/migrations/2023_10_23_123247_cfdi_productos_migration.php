@@ -16,6 +16,7 @@ class CfdiProductosMigration extends Migration
         Schema::create('cfdi_productos', function (Blueprint $table) {
             //$table->id();
             $table->increments('id');
+            $table->integer('user_id')->nullable();
             $table->integer('empresa_id')->nullable();
             $table->string('ClaveProdServ')->nullable();
             $table->string('NoIdentificacion',1000)->nullable();

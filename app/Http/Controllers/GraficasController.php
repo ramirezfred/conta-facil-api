@@ -405,7 +405,8 @@ class GraficasController extends Controller
                 //where(DB::raw('DAY(created_at)'),$dia_actual)
                 where(DB::raw('MONTH(created_at)'),$mes)
                 ->where(DB::raw('YEAR(created_at)'),$anio)
-                ->where('emisor_id',$usuario->cfdi_empresa->id)
+                // ->where('emisor_id',$usuario->cfdi_empresa->id)
+                ->where('user_id',$userId)
                 ->where(function ($query) {
                     $query
                         ->where('status',1)
@@ -600,23 +601,12 @@ class GraficasController extends Controller
         ->where('user_id', $userId)
         ->sum('total');
 
-        $emisor = CfdiEmpresa::
-            where('user_id', $userId)
-            ->first();
-
-        if (!$emisor)
-        {
-
-            $facturacion = [];
-
-        }else{
-
-            // Facturación total por cliente
-            $facturacion = CfdiComprobante::
+        // Facturación total por cliente
+        $facturacion = CfdiComprobante::
             select('cfdi_receptor.Rfc', 'cfdi_receptor.Nombre', DB::raw('SUM(cfdi_comprobante.Total) as total'))
             ->join('cfdi_receptor', 'cfdi_receptor.comprobante_id', '=', 'cfdi_comprobante.id')
             ->where('cfdi_comprobante.status', 1)
-            ->where('cfdi_comprobante.emisor_id', $emisor->id)
+            ->where('cfdi_comprobante.user_id', $userId)
             ->whereBetween('cfdi_comprobante.created_at', [$startDate, $endDate])
             ->groupBy('cfdi_receptor.Rfc', 'cfdi_receptor.Nombre')
             ->orderByDesc('total')
@@ -627,8 +617,6 @@ class GraficasController extends Controller
                     'total' => round($item->total, 2),
                 ];
             });
-
-        }
 
         return response()->json([
             'ingresos' => $ingresos,
@@ -669,41 +657,28 @@ class GraficasController extends Controller
                 ];
             });
 
-        $emisor = CfdiEmpresa::
-            where('user_id', $userId)
-            ->first();
+        // Distribución de ingresos por cliente
+        $distribucion = CfdiComprobante::select(
+                'cfdi_receptor.Rfc',
+                'cfdi_receptor.Nombre',
+                DB::raw('SUM(cfdi_comprobante.Total) as total')
+            )
+            ->join('cfdi_receptor', 'cfdi_receptor.comprobante_id', '=', 'cfdi_comprobante.id')
+            ->where('cfdi_comprobante.status', 1)
+            ->where('cfdi_comprobante.user_id', $userId)
+            ->whereBetween('cfdi_comprobante.created_at', [$startDate, $endDate])
+            ->groupBy('cfdi_receptor.Rfc', 'cfdi_receptor.Nombre')
+            ->get();
 
-        if (!$emisor)
-        {
+        $totalGeneral = $distribucion->sum('total');
 
-            $distribucionClientes = [];
-
-        }else{
-
-            // Distribución de ingresos por cliente
-            $distribucion = CfdiComprobante::select(
-                    'cfdi_receptor.Rfc',
-                    'cfdi_receptor.Nombre',
-                    DB::raw('SUM(cfdi_comprobante.Total) as total')
-                )
-                ->join('cfdi_receptor', 'cfdi_receptor.comprobante_id', '=', 'cfdi_comprobante.id')
-                ->where('cfdi_comprobante.status', 1)
-                ->where('cfdi_comprobante.emisor_id', $emisor->id)
-                ->whereBetween('cfdi_comprobante.created_at', [$startDate, $endDate])
-                ->groupBy('cfdi_receptor.Rfc', 'cfdi_receptor.Nombre')
-                ->get();
-
-            $totalGeneral = $distribucion->sum('total');
-
-            $distribucionClientes = $distribucion->map(function ($item) use ($totalGeneral) {
-                return [
-                    'cliente' => $item->Nombre ?? 'Desconocido',
-                    'total' => round($item->total, 2),
-                    'porcentaje' => $totalGeneral > 0 ? round(($item->total / $totalGeneral) * 100, 2) : 0,
-                ];
-            });
-
-        }
+        $distribucionClientes = $distribucion->map(function ($item) use ($totalGeneral) {
+            return [
+                'cliente' => $item->Nombre ?? 'Desconocido',
+                'total' => round($item->total, 2),
+                'porcentaje' => $totalGeneral > 0 ? round(($item->total / $totalGeneral) * 100, 2) : 0,
+            ];
+        });
 
         return response()->json([
             'top_gastos' => $topCategorias,
@@ -840,22 +815,15 @@ class GraficasController extends Controller
             : null;
 
         // Facturación
-        $emisor = CfdiEmpresa::where('user_id', $userId)->first();
+        $facturasA = CfdiComprobante::where('status', 1)
+            ->where('user_id', $userId)
+            ->whereBetween('created_at', [$aInicio, $aFin])
+            ->sum('Total');
 
-        $facturasA = 0;
-        $facturasB = 0;
-
-        if ($emisor) {
-            $facturasA = CfdiComprobante::where('status', 1)
-                ->where('emisor_id', $emisor->id)
-                ->whereBetween('created_at', [$aInicio, $aFin])
-                ->sum('Total');
-
-            $facturasB = CfdiComprobante::where('status', 1)
-                ->where('emisor_id', $emisor->id)
-                ->whereBetween('created_at', [$bInicio, $bFin])
-                ->sum('Total');
-        }
+        $facturasB = CfdiComprobante::where('status', 1)
+            ->where('user_id', $userId)
+            ->whereBetween('created_at', [$bInicio, $bFin])
+            ->sum('Total');
 
         $variacionFacturas = $facturasB > 0
             ? round((($facturasA - $facturasB) / $facturasB) * 100, 2)
@@ -881,19 +849,6 @@ class GraficasController extends Controller
     {
         $user_id = $request->input('user_id');
 
-        $emisor = CfdiEmpresa::
-            where('user_id', $user_id)
-            ->first();
-
-        if (!$emisor)
-        {
-            return response()->json([
-                'pagadas'=>0,
-                'por_pagar'=>0,
-                'canceladas'=>0,
-            ], 200);
-        }
-
         $anio = $request->input('anio');
         $mes = $request->input('mes');
         //$dia = $request->input('dia');
@@ -911,7 +866,7 @@ class GraficasController extends Controller
 
         //facturas pagadas
         $pagadas = CfdiComprobante::
-            where('emisor_id',$emisor->id)
+            where('user_id',$user_id)
             ->where('status', 1)
             ->where('Fecha', 'like', '%'.$fecha.'%')
             ->where('status_pay', 1)
@@ -919,7 +874,7 @@ class GraficasController extends Controller
 
         //facturas por_pagar
         $por_pagar = CfdiComprobante::
-            where('emisor_id',$emisor->id)
+            where('user_id',$user_id)
             ->where('status', 1)
             ->where('Fecha', 'like', '%'.$fecha.'%')
             ->where('status_pay', 0)
@@ -927,7 +882,7 @@ class GraficasController extends Controller
 
         //facturas canceladas
         $canceladas = CfdiComprobante::
-            where('emisor_id',$emisor->id)
+            where('user_id',$user_id)
             ->where('status', 2)
             ->where('Fecha', 'like', '%'.$fecha.'%')
             ->count();

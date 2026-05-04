@@ -206,18 +206,6 @@ class BotService
             ];
         }
 
-        $cfdi_empresa = CfdiEmpresa::
-            where('user_id',$user_id)
-            ->first();
-
-        if (!$cfdi_empresa)
-        {
-            return [
-                'status'=>'error',
-                'message'=>'Empresa no encontrada.'
-            ];
-        }
-
         // =============================
         // VALIDAR DATOS DE ENTRADA
         // =============================
@@ -240,8 +228,7 @@ class BotService
         }
 
         $Rfc_aux = CfdiEmpresa::
-            where('id','<>',$cfdi_empresa->id)
-            ->where('Rfc',$rfc)
+            where('Rfc',$rfc)
             ->with('user')
             ->first();
 
@@ -319,14 +306,51 @@ class BotService
         }
 
         // Guardar datos de emisor_cfdi
-        $cfdi_empresa->Rfc = $rfc;
-        $cfdi_empresa->RazonSocial = $razon_social;
-        $cfdi_empresa->RegimenFiscal = $regimen_fiscal->id;
-        $cfdi_empresa->CP = $codigo_postal;
-        $cfdi_empresa->cer = $certificado_csd['url'];
-        $cfdi_empresa->key = $clave_privada_csd['url'];
-        $cfdi_empresa->pass = $cadenaEncriptada;
-        $cfdi_empresa->save();
+        $tieneCfdiEmpresas = CfdiEmpresa::
+            where('user_id', $user_id)
+            ->exists();
+
+        $esPrimerEmisor = !$tieneCfdiEmpresas;
+
+        // 5. Guardar en Base de Datos
+        $emisor = CfdiEmpresa::create([
+            'user_id'        => $user_id,
+            'Rfc'            => $rfc,
+            'RazonSocial'   => $razon_social,
+            'RegimenFiscal' => $regimen_fiscal->id,
+            'CP'             => $codigo_postal,
+            'pass'   => $cadenaEncriptada,
+            'cer'       => $certificado_csd['url'],
+            'key'       => $clave_privada_csd['url'],
+
+            'flag_descuento'=>0,
+            'flag_objetoImp'=>1,
+            'flag_retencion'=>0,
+            'flag_producto'=>0,
+
+            // Activar funcionalidades adicionales solo para el primer emisor registrado por el usuario
+            'emisor_bot'      => true,
+            'emisor_pos'      => $esPrimerEmisor,
+            'emisor_ingresos' => $esPrimerEmisor,
+        ]);
+
+        // Crear contacto genérico
+        $contacto = CfdiCliente::create([
+            'empresa_id'=>$emisor->id,
+            'status'=>true,
+            'Rfc'=>"XAXX010101000",
+            'Nombre'=>"PUBLICO EN GENERAL",
+            'DomicilioFiscalReceptor'=>$emisor->CP,
+            'ResidenciaFiscal'=>null,
+            'NumRegIdTrib'=>null,
+            'RegimenFiscalReceptor'=>"616", //Sin obligaciones fiscales
+            'UsoCFDI'=>"24", //Sin efectos fiscales.
+            'Email'=>$user->email,
+            'user_id'=>$user->id,
+            'tipo_entidad'=>'cliente',
+            'tipo_cliente'=>'cliente',
+            'origen'=>'pos',
+        ]);
 
         // Obtener datos de configuración 
         $datos_configuracion = $this->getStatusConfiguracion($user_id);
@@ -401,20 +425,8 @@ class BotService
             ];
         }
 
-        $cfdi_empresa = CfdiEmpresa::
-            where('user_id',$user_id)
-            ->first();
-
-        if (!$cfdi_empresa)
-        {
-            return [
-                'status'=>'error',
-                'message'=>'Empresa no encontrada.'
-            ];
-        }
-
         $cfdi_producto = CfdiProducto::
-            where('empresa_id',$cfdi_empresa->id)
+            where('user_id',$user_id)
             ->first();
 
         if (!$cfdi_producto)
@@ -528,7 +540,6 @@ class BotService
 
         $obj = User::whereNull('flag_eliminado')
             ->where('id', $user_id)
-            ->with('cfdi_empresa')
             ->first();
         if (!$obj)
         {
@@ -549,10 +560,15 @@ class BotService
             ];
         }
 
-        //Si el ingreso es contable, Validacion para user resico
-        if($args->categoria == 'Contable' && $obj->cfdi_empresa){
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $user_id)
+            ->where('emisor_ingresos', true)
+            ->first();
 
-            $limite_facturacion = $this->determinarLimiteFacturacion($obj->cfdi_empresa->Rfc,$obj->cfdi_empresa->RegimenFiscal);
+        //Si el ingreso es contable, Validacion para user resico
+        if($args->categoria == 'Contable' && $cfdi_empresa){
+
+            $limite_facturacion = $this->determinarLimiteFacturacion($cfdi_empresa->Rfc,$cfdi_empresa->RegimenFiscal);
             if($limite_facturacion != null && $limite_facturacion != 0){
 
                 $total_facturado = $this->getTotalFacturado($obj->id);
@@ -613,12 +629,12 @@ class BotService
     public function listar_receptores($args, $user_id) 
     {
 
-        $user = User::whereNull('flag_eliminado')
-            ->where('id', $user_id)
-            ->with('cfdi_empresa')
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $user_id)
+            ->where('emisor_bot', true)
             ->first();
 
-        if (!$user || !$user->cfdi_empresa)
+        if (!$cfdi_empresa)
         {
             return [
                 'status'=>'error',
@@ -627,7 +643,7 @@ class BotService
         }
 
         $receptores = CfdiCliente::activos()
-            ->where('empresa_id', $user->cfdi_empresa->id)
+            ->where('empresa_id', $cfdi_empresa->id)
             ->whereIn("tipo_entidad", ["cliente", "ambos"])
             ->with('mi_regimen_fiscal')
             ->with('mi_uso_cfdi')
@@ -1176,7 +1192,6 @@ class BotService
 
         $cliente = User::whereNull('flag_eliminado')
             ->where('id', $user_id)
-            ->with('cfdi_empresa')
             ->first();
 
         if (!$cliente)
@@ -1195,15 +1210,20 @@ class BotService
             ];
         }
 
-        if (!$cliente->cfdi_empresa)
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $user_id)
+            ->where('emisor_pos', true)
+            ->first();
+
+        if (!$cfdi_empresa)
         {
             return [
                 'status'=>'error',
-                'message'=>'Empresa no encontrada.'
+                'message'=>'Emisor no encontrado.'
             ];
         }
 
-        $empresa = $cliente->cfdi_empresa;
+        $empresa = $cfdi_empresa;
 
         // --- Validar datos de Emisor ---
         $camposRequeridosEmisor = [
@@ -1261,6 +1281,7 @@ class BotService
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->first();   
 
         //elimino cotizacion curso desde el panel en caso de que tenga
@@ -1268,16 +1289,16 @@ class BotService
             for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                 $pedidoCurso->conceptos[$i]->delete();
             }
-            $pedidoCurso->receptor->delete();
+            if ($pedidoCurso->emisor) {
+                $pedidoCurso->emisor->delete();
+            }
+            if ($pedidoCurso->receptor) {
+                $pedidoCurso->receptor->delete();
+            }
             $pedidoCurso->delete();
         } 
 
         //Iniciar proceso de facturacion
-        // $Folio = (CfdiComprobante::count())+1;
-
-        // $Serie = (CfdiComprobante::
-        //     where('emisor_id',$empresa->id)
-        //     ->count())+1;
 
         $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
@@ -1315,6 +1336,16 @@ class BotService
             'TasaIva'=>$TasaIva,
             'TasaIsr'=>$TasaIsr,
             'Tipo'=>$Tipo,
+            'user_id'=>$empresa->user_id,
+        ]);
+
+        //crear el emisor
+        $newObjEmisor=CfdiEmisor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$empresa->Rfc,
+            'RazonSocial'=>$empresa->RazonSocial,
+            'RegimenFiscal'=>$empresa->RegimenFiscal,
+            'CP'=>$empresa->CP,
         ]);
 
         //crear el receptor
@@ -1375,7 +1406,12 @@ class BotService
                 for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                     $pedidoCurso->conceptos[$i]->delete();
                 }
-                $pedidoCurso->receptor->delete();
+                if ($pedidoCurso->emisor) {
+                    $pedidoCurso->emisor->delete();
+                }
+                if ($pedidoCurso->receptor) {
+                    $pedidoCurso->receptor->delete();
+                }
                 $pedidoCurso->delete();
             }
 
@@ -1448,24 +1484,6 @@ class BotService
                 $clienteExiste->save();
             }
 
-            //Descontar inventario
-            for ($i=0; $i < count($conceptos); $i++) { 
-                if ($conceptos[$i]->producto_id) {
-                    
-                    $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                        ->whereNull('flag_eliminado')
-                        ->first();
-
-                    if ($producto)
-                    {
-                        $stock = $producto->stock - $conceptos[$i]->Cantidad;
-                        $producto->stock = $stock;
-                        $producto->save();
-                    }
-
-                }
-            }
-
             try {
                 $this->emailFactura($pedidoCurso->id); 
             } catch (Exception $e) {
@@ -1487,7 +1505,6 @@ class BotService
 
         $cliente = User::whereNull('flag_eliminado')
             ->where('id', $user_id)
-            ->with('cfdi_empresa')
             ->first();
 
         if (!$cliente)
@@ -1496,32 +1513,6 @@ class BotService
                 'status'=>'error',
                 'message'=>'Usuario no encontrado.'
             ];
-        }
-
-        if (!$cliente->cfdi_empresa)
-        {
-            return [
-                'status'=>'error',
-                'message'=>'Emisor no encontrado.'
-            ];
-        }
-
-        $emisor = $cliente->cfdi_empresa;
-
-        // --- Validar datos de Emisor ---
-        $camposRequeridosEmisor = [
-            'Rfc', 'RazonSocial', 'RegimenFiscal',
-            'CP', 'cer', 'key', 'pass'
-        ];
-
-        foreach ($camposRequeridosEmisor as $campo) {
-            if (empty($emisor->$campo)) {
-                $message = 'Para cancelar una factura, primero debes configurar tus datos de emisor.';
-                return [
-                    'status'=>'error',
-                    'message'=>$message
-                ];
-            }
         }
 
         $Serie = strtoupper($args->serie);
@@ -1540,7 +1531,7 @@ class BotService
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
-            ->where('emisor_id',$emisor->id)
+            ->where('user_id',$user_id)
             ->where('Serie',$Serie)
             ->first();
             
@@ -1565,19 +1556,48 @@ class BotService
             ];
         }
 
-        
-        // $datos['PAC']['usuario'] = "DEMO700101XXX";
-        // $datos['PAC']['pass'] = "DEMO700101XXX";
+        $emisor = CfdiEmpresa::
+            with('mi_regimen_fiscal')
+            ->find($factura->emisor_id);
 
-        $datos['PAC']['usuario'] = 'AUMA9101171B4';
-        $datos['PAC']['pass'] = 'AUMA9101171B41234';
+        if (!$emisor)
+        {
+            return [
+                'status'=>'error',
+                'message'=>'Emisor no encontrado.'
+            ];
+        }
+
+        // --- Validar datos de Emisor ---
+        $camposRequeridosEmisor = [
+            'Rfc', 'RazonSocial', 'RegimenFiscal',
+            'CP', 'cer', 'key', 'pass'
+        ];
+
+        foreach ($camposRequeridosEmisor as $campo) {
+            if (empty($emisor->$campo)) {
+                $message = 'Para cancelar una factura, primero debes configurar tus datos de emisor.';
+                return [
+                    'status'=>'error',
+                    'message'=>$message
+                ];
+            }
+        }
+
+        
+        // Credenciales de Timbrado
+        if($emisor->user_id == 6){
+            $datos['PAC']['usuario'] = "DEMO700101XXX";
+            $datos['PAC']['pass'] = "DEMO700101XXX";
+            $datos["produccion"]="NO";
+        }else{
+            $datos['PAC']['usuario'] = 'AUMA9101171B4';
+            $datos['PAC']['pass'] = 'AUMA9101171B41234';
+            $datos['produccion'] = 'SI';
+        }
 
         $datos['modulo']="cancelacion2022"; 
         $datos['accion']="cancelar"; 
-
-        // $datos["produccion"]="NO"; 
-
-        $datos['produccion'] = 'SI';
 
         //$datos["xml"]="../../timbrados/cfdi_ejemplo_factura.xml";
         $datos["uuid"]=$factura->timbre_fiscal_digital->UUID;
@@ -1617,24 +1637,6 @@ class BotService
             //Pasar a cancelada
             $factura->status = 2;
             $factura->save();
-
-            //Reponer inventario
-            for ($i=0; $i < count($factura->conceptos); $i++) { 
-                if ($factura->conceptos[$i]->producto_id) {
-                    
-                    $producto = Producto::where('id', $factura->conceptos[$i]->producto_id)
-                        ->whereNull('flag_eliminado')
-                        ->first();
-
-                    if ($producto)
-                    {
-                        $stock = $producto->stock + $factura->conceptos[$i]->Cantidad;
-                        $producto->stock = $stock;
-                        $producto->save();
-                    }
-
-                }
-            }
 
             try {
                 $this->emailFacturaCancelada($factura_id); 
@@ -1760,6 +1762,7 @@ class BotService
         {
             $empresa = CfdiEmpresa::
                 where('user_id',$user_id)
+                ->where('emisor_bot', true)
                 ->first();
 
             if ($empresa && $empresa->RegimenFiscal)
@@ -2081,22 +2084,14 @@ class BotService
 
         $emisor_id = null;
         
-        $emisor = CfdiEmpresa::
-            where('user_id', $user_id)
-            ->first();
-
-        if ($emisor)
-        {
-            $emisor_id = $emisor->id;
-        }
 
         // Facturación
-        $facturacionMesActual = CfdiComprobante::where('emisor_id', $emisor_id)
+        $facturacionMesActual = CfdiComprobante::where('user_id', $user_id)
             ->where('status', 1)
             ->whereBetween('created_at', [$mesActualInicio, $mesActualFin])
             ->sum('Total');
 
-        $facturacionMesAnterior = CfdiComprobante::where('emisor_id', $emisor_id)
+        $facturacionMesAnterior = CfdiComprobante::where('user_id', $user_id)
             ->where('status', 1)
             ->whereBetween('created_at', [$mesAnteriorInicio, $mesAnteriorFin])
             ->sum('Total');
@@ -2106,7 +2101,7 @@ class BotService
             select('cfdi_receptor.Rfc', 'cfdi_receptor.Nombre', DB::raw('SUM(cfdi_comprobante.Total) as total'))
             ->join('cfdi_receptor', 'cfdi_receptor.comprobante_id', '=', 'cfdi_comprobante.id')
             ->where('cfdi_comprobante.status', 1)
-            ->where('cfdi_comprobante.emisor_id', $emisor_id)
+            ->where('cfdi_comprobante.user_id', $user_id)
             ->whereBetween('cfdi_comprobante.created_at', [$mesActualInicio, $mesActualFin])
             ->groupBy('cfdi_receptor.Rfc', 'cfdi_receptor.Nombre')
             ->orderByDesc('total')
@@ -2312,19 +2307,12 @@ class BotService
         $mes_actual = date("m");
         $anio_actual = date("Y");
 
-        $usuario = User::with('cfdi_empresa')->find($user_id);
-
-        if (!$usuario)
-        {
-            return 0;
-        }
-
         //total facturado
         $total = CfdiComprobante::
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('emisor_id',$usuario->cfdi_empresa->id)
+            ->where('user_id',$user_id)
             ->where(function ($query) {
                 $query
                     ->where('status',1)
@@ -2337,7 +2325,7 @@ class BotService
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             ->where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('user_id',$usuario->id)
+            ->where('user_id',$user_id)
             ->where('tipo_id',1)
             ->whereNull('factura_id')
             ->sum('total');
@@ -3197,7 +3185,10 @@ class BotService
 
         $user = User::whereNull('flag_eliminado')
             ->where('id', $user_id)
-            ->with('cfdi_empresa')
+            ->with(['cfdi_empresa' => function ($query) {
+                // Aquí agregas la condición a la relación
+                $query->where('emisor_bot', true);
+            }])
             ->first();
 
         if (!$user || !$user->cfdi_empresa)
@@ -3328,6 +3319,7 @@ class BotService
 
         $cfdi_empresa = CfdiEmpresa::
             where('user_id',$user_id)
+            ->where('emisor_bot', true)
             ->with('mi_regimen_fiscal')
             ->first();
 
@@ -3347,38 +3339,34 @@ class BotService
             $config_emisor_cfdi_completed = true;
         }
 
-        if ($cfdi_empresa) {
+        $cfdi_producto = CfdiProducto::
+            where('user_id',$user_id)
+            ->with('mi_clave_prod_serv')
+            ->with('mi_clave_unidad')
+            ->with('mi_forma_pago')
+            ->first();
 
-            $cfdi_producto = CfdiProducto::
-                where('empresa_id',$cfdi_empresa->id)
-                ->with('mi_clave_prod_serv')
-                ->with('mi_clave_unidad')
-                ->with('mi_forma_pago')
-                ->first();
+        if (
+            !empty($user->tipo_algoritmo_factura) && 
+            !empty($cfdi_producto) &&
+            !empty($cfdi_producto->ClaveProdServ)
+        ) {
 
-            if (
-                !empty($user->tipo_algoritmo_factura) && 
-                !empty($cfdi_producto) &&
-                !empty($cfdi_producto->ClaveProdServ)
-            ) {
+            
+            $datos_recolectados['facturacion_ingresos'] = [];
+            $datos_recolectados['facturacion_ingresos']['frecuencia'] = $user->tipo_algoritmo_factura == 1 ? 'Semanal' : 'Mensual';
+            
+            $datos_recolectados['facturacion_ingresos']['clave_producto_servicio'] = $cfdi_producto->mi_clave_prod_serv->id;
+            $datos_recolectados['facturacion_ingresos']['clave_unidad'] = $cfdi_producto->mi_clave_unidad->id;
 
-                
-                $datos_recolectados['facturacion_ingresos'] = [];
-                $datos_recolectados['facturacion_ingresos']['frecuencia'] = $user->tipo_algoritmo_factura == 1 ? 'Semanal' : 'Mensual';
-                
-                $datos_recolectados['facturacion_ingresos']['clave_producto_servicio'] = $cfdi_producto->mi_clave_prod_serv->id;
-                $datos_recolectados['facturacion_ingresos']['clave_unidad'] = $cfdi_producto->mi_clave_unidad->id;
+            // $forma_pago = Cfdi40FormaPago::find($cfdi_producto->FormaPago);
 
-                // $forma_pago = Cfdi40FormaPago::find($cfdi_producto->FormaPago);
-
-                if ($cfdi_producto->mi_forma_pago)
-                {
-                    $datos_recolectados['facturacion_ingresos']['forma_pago'] = $cfdi_producto->mi_forma_pago->texto;
-                }
-
-                $config_facturacion_ingresos_completed = true;
-
+            if ($cfdi_producto->mi_forma_pago)
+            {
+                $datos_recolectados['facturacion_ingresos']['forma_pago'] = $cfdi_producto->mi_forma_pago->texto;
             }
+
+            $config_facturacion_ingresos_completed = true;
 
         }
 

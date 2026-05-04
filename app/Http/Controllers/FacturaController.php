@@ -28,6 +28,7 @@ use App\Models\CfdiConcepto;
 use App\Models\CfdiArchivo;
 use App\Models\CfdiTimbreFiscalDigital;
 use App\Models\CfdiRecurrente;
+use App\Models\CfdiEmisor;
 
 use App\Models\Cfdi40CodigoPostal;
 use App\Models\Cfdi40RegimenFiscal;
@@ -133,7 +134,6 @@ class FacturaController extends Controller
         }
 
         $obj = User::select('id','color_a','color_b','color_c','logo')
-            //->with('cfdi_empresa')
             ->with(['cfdi_empresa.producto' => function ($query){
                 $query->with('mi_clave_prod_serv')
                     ->with('mi_clave_unidad');
@@ -452,17 +452,6 @@ class FacturaController extends Controller
             return response()->json(['error'=>'Cliente no encontrado'], 404);
         }
 
-        $emisor = CfdiEmpresa::
-            where('user_id', $cliente_id)
-            ->first();
-
-        if (!$emisor)
-        {
-            // Devolvemos error codigo http 404
-            return response()->json(['error'=>'Emisor no encontrado'], 404);
-        }
-
-
         $anio = $request->input('anio');
         $mes = $request->input('mes');
         //$dia = $request->input('dia');
@@ -479,8 +468,8 @@ class FacturaController extends Controller
         $fecha = $anio.'-'.$mes.'-';
 
         //facturas en emitidas
-        $facturas = CfdiComprobante::select('id','emisor_id','status','Serie','Folio','Fecha','Total','status_pay')
-            ->where('emisor_id',$emisor->id)
+        $facturas = CfdiComprobante::select('id','user_id','emisor_id','status','Serie','Folio','Fecha','Total','status_pay')
+            ->where('user_id',$cliente_id)
             ->where('status', 1)
             ->where('Fecha', 'like', '%'.$fecha.'%')
             ->with(['receptor' => function ($query){
@@ -488,6 +477,9 @@ class FacturaController extends Controller
             }])
             ->with(['archivo' => function ($query){
                 $query->select('id','comprobante_id','xml_archivo','pdf');
+            }])
+            ->with(['emisor' => function ($query){
+                $query->select('id','comprobante_id','Rfc','RazonSocial');
             }])
             ->orderBy('id', 'desc')
             ->get();
@@ -516,16 +508,6 @@ class FacturaController extends Controller
             return response()->json(['error'=>'Cliente no encontrado'], 404);
         }
 
-        $emisor = CfdiEmpresa::
-            where('user_id', $cliente_id)
-            ->first();
-
-        if (!$emisor)
-        {
-            // Devolvemos error codigo http 404
-            return response()->json(['error'=>'Emisor no encontrado'], 404);
-        }
-
         $anio = $request->input('anio');
         $mes = $request->input('mes');
         //$dia = $request->input('dia');
@@ -542,8 +524,8 @@ class FacturaController extends Controller
         $fecha = $anio.'-'.$mes.'-';
 
         //facturas en canceladas
-        $facturas = CfdiComprobante::select('id','emisor_id','status','Serie','Folio','Fecha','Total')
-            ->where('emisor_id',$emisor->id)
+        $facturas = CfdiComprobante::select('id','user_id','emisor_id','status','Serie','Folio','Fecha','Total')
+            ->where('user_id',$cliente_id)
             ->where('status', 2)
             ->where('Fecha', 'like', '%'.$fecha.'%')
             ->with(['receptor' => function ($query){
@@ -551,6 +533,9 @@ class FacturaController extends Controller
             }])
             ->with(['archivo' => function ($query){
                 $query->select('id','comprobante_id','xml_archivo','pdf');
+            }])
+            ->with(['emisor' => function ($query){
+                $query->select('id','comprobante_id','Rfc','RazonSocial');
             }])
             ->orderBy('id', 'desc')
             ->get();
@@ -579,6 +564,9 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with(['emisor' => function ($query){
+                $query->with('mi_regimen_fiscal');
+            }])
             ->find($factura_id);
 
         if(!$factura){
@@ -732,22 +720,24 @@ class FacturaController extends Controller
         $emisor = CfdiEmpresa::
             with('mi_regimen_fiscal')
             ->find($factura->emisor_id);
- 
-        $cliente = User::find($emisor->user_id);
 
-        
-        // $datos['PAC']['usuario'] = "DEMO700101XXX";
-        // $datos['PAC']['pass'] = "DEMO700101XXX";
+        if(!$emisor){
+            return response()->json(['error'=>'Emisor no encontrado.'],404);
+        }
 
-        $datos['PAC']['usuario'] = 'AUMA9101171B4';
-        $datos['PAC']['pass'] = 'AUMA9101171B41234';
+        // Credenciales de Timbrado
+        if($emisor->user_id == 6){
+            $datos['PAC']['usuario'] = "DEMO700101XXX";
+            $datos['PAC']['pass'] = "DEMO700101XXX";
+            $datos["produccion"]="NO";
+        }else{
+            $datos['PAC']['usuario'] = 'AUMA9101171B4';
+            $datos['PAC']['pass'] = 'AUMA9101171B41234';
+            $datos['produccion'] = 'SI';
+        }
 
         $datos['modulo']="cancelacion2022"; 
         $datos['accion']="cancelar"; 
-
-        //$datos["produccion"]="NO"; 
-
-        $datos['produccion'] = 'SI';
 
         //$datos["xml"]="../../timbrados/cfdi_ejemplo_factura.xml";
         $datos["uuid"]=$factura->timbre_fiscal_digital->UUID;
@@ -787,24 +777,6 @@ class FacturaController extends Controller
             //Pasar a cancelada
             $factura->status = 2;
             $factura->save();
-
-            //Reponer inventario
-            for ($i=0; $i < count($factura->conceptos); $i++) { 
-                if ($factura->conceptos[$i]->producto_id) {
-                    
-                    $producto = Producto::where('id', $factura->conceptos[$i]->producto_id)
-                        ->whereNull('flag_eliminado')
-                        ->first();
-
-                    if ($producto)
-                    {
-                        $stock = $producto->stock + $factura->conceptos[$i]->Cantidad;
-                        $producto->stock = $stock;
-                        $producto->save();
-                    }
-
-                }
-            }
 
             try {
                 $this->emailFacturaCancelada($factura_id); 
@@ -903,11 +875,6 @@ class FacturaController extends Controller
 
     public function timbrarDesdePanel(Request $request, $empresa_id)
     {
-        // $token_result = $this->validarToken($request);
-        // if($token_result !== true){
-        //     return response()->json($token_result, 401);
-        // }
-
         // Comprobamos si la empresa que nos están pasando existe o no.
         $empresa=CfdiEmpresa::find($empresa_id);
         if (!$empresa)
@@ -927,17 +894,6 @@ class FacturaController extends Controller
         {
             return response()->json(['error'=>'Emisor inhabilitado para generar timbre electrónico.'], 409);
         }
-
-        //Validacion para user resico
-        // if($empresa->RegimenFiscal == '626'){
-        //     $total_facturado = $this->getTotalFacturado($empresa->user_id);
-
-        //     if($total_facturado >= 290000){
-        //         return response()->json(['error'=>'Ya alcanzaste el límite de $290,000 pesos mensuales facturables para usuarios con Régimen Simplificado de Confianza'], 409);
-        //     }else if(($total_facturado+$request->input('Total')) >= 290000){
-        //         return response()->json(['error'=>'El total de la factura excede el límite de $290,000 pesos mensuales facturables para usuarios con Régimen Simplificado de Confianza'], 409);
-        //     }
-        // }
 
         $limite_facturacion = $this->determinarLimiteFacturacion($empresa->Rfc,$empresa->RegimenFiscal);
         if($limite_facturacion != null && $limite_facturacion != 0){
@@ -963,36 +919,6 @@ class FacturaController extends Controller
             return response()->json(['error'=>'Factura sin conceptos.'], 409);
         }
 
-        //verificar stock
-        for ($i=0; $i < count($conceptos); $i++) { 
-            if ($conceptos[$i]->producto_id) {
-                
-                $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                    ->whereNull('flag_eliminado')
-                    ->first();
-
-                if (!$producto)
-                {
-                    return response()->json([
-                        'error'=>'No existe el producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-
-                if ($producto->stock == 0) {
-                    return response()->json([
-                        'error'=>'No hay unidades disponibles del producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-                
-                if ($producto->stock < $conceptos[$i]->Cantidad) {
-                    return response()->json([
-                        'error'=>'Solo hay '.$producto->stock.' unidades disponibles del producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-
-            }
-        }
-
         $pedidoCurso = CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->where('status', 0)
@@ -1007,6 +933,7 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->first();   
 
         //elimino cotizacion curso desde el panel en caso de que tenga
@@ -1014,16 +941,16 @@ class FacturaController extends Controller
             for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                 $pedidoCurso->conceptos[$i]->delete();
             }
-            $pedidoCurso->receptor->delete();
+            if ($pedidoCurso->emisor) {
+                $pedidoCurso->emisor->delete();
+            }
+            if ($pedidoCurso->receptor) {
+                $pedidoCurso->receptor->delete();
+            }
             $pedidoCurso->delete();
         } 
 
         //Iniciar proceso de facturacion
-        // $Folio = (CfdiComprobante::count())+1;
-
-        // $Serie = (CfdiComprobante::
-        //     where('emisor_id',$empresa->id)
-        //     ->count())+1;
 
         $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
@@ -1038,8 +965,6 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            // 'Serie'=>"S-".$empresa->id."-".$Serie,
-            // 'Folio'=>"F-".$empresa->id."-".$Folio,
             'Serie'=>$Serie,
             'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
@@ -1058,11 +983,19 @@ class FacturaController extends Controller
             'MetodoPago'=>$request->input('MetodoPago'),
             'LugarExpedicion'=>$empresa->CP,
             'Confirmacion'=>"",
-            //'estado'=>null,
-            //'function'=>null,
             'TasaIva'=>$request->input('TasaIva'),
             'TasaIsr'=>$request->input('TasaIsr'),
             'Tipo'=>$request->input('Tipo'),
+            'user_id'=>$empresa->user_id,
+        ]);
+
+        //crear el emisor
+        $newObjEmisor=CfdiEmisor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$empresa->Rfc,
+            'RazonSocial'=>$empresa->RazonSocial,
+            'RegimenFiscal'=>$empresa->RegimenFiscal,
+            'CP'=>$empresa->CP,
         ]);
 
         //crear el receptor
@@ -1094,7 +1027,6 @@ class FacturaController extends Controller
                 'Descuento' => $conceptos[$i]->Descuento,
                 'ObjetoImp' => $conceptos[$i]->ObjetoImp,
                 'ObjetoImpRet' => $conceptos[$i]->ObjetoImpRet,
-                'producto_id' => $conceptos[$i]->producto_id,
             ]);
         }
 
@@ -1116,6 +1048,7 @@ class FacturaController extends Controller
                 ->with('archivo')
                 ->with('mi_forma_pago')
                 ->with('mi_metodo_pago')
+                ->with('emisor')
                 ->first();   
 
             //elimino cotizacion curso desde el panel en caso de que tenga
@@ -1123,7 +1056,12 @@ class FacturaController extends Controller
                 for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                     $pedidoCurso->conceptos[$i]->delete();
                 }
-                $pedidoCurso->receptor->delete();
+                if ($pedidoCurso->emisor) {
+                    $pedidoCurso->emisor->delete();
+                }
+                if ($pedidoCurso->receptor) {
+                    $pedidoCurso->receptor->delete();
+                }
                 $pedidoCurso->delete();
             }
 
@@ -1162,7 +1100,6 @@ class FacturaController extends Controller
                 ->update([
                     'pdf' => $document,
                 ]);
-
 
             //crear o actualizar cliente
             $clienteExiste = CfdiCliente::noEliminados()
@@ -1196,24 +1133,6 @@ class FacturaController extends Controller
                 $clienteExiste->save();
             }
 
-            //Descontar inventario
-            for ($i=0; $i < count($conceptos); $i++) { 
-                if ($conceptos[$i]->producto_id) {
-                    
-                    $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                        ->whereNull('flag_eliminado')
-                        ->first();
-
-                    if ($producto)
-                    {
-                        $stock = $producto->stock - $conceptos[$i]->Cantidad;
-                        $producto->stock = $stock;
-                        $producto->save();
-                    }
-
-                }
-            }
-
             try {
                 $this->emailFactura($pedidoCurso->id); 
             } catch (Exception $e) {
@@ -1230,11 +1149,6 @@ class FacturaController extends Controller
 
     public function timbrarDesdePanelSandbox(Request $request, $empresa_id)
     {
-        // $token_result = $this->validarToken($request);
-        // if($token_result !== true){
-        //     return response()->json($token_result, 401);
-        // }
-
         // Comprobamos si la empresa que nos están pasando existe o no.
         $empresa=CfdiEmpresa::find($empresa_id);
         if (!$empresa)
@@ -1254,17 +1168,6 @@ class FacturaController extends Controller
         {
             return response()->json(['error'=>'Emisor inhabilitado para generar timbre electrónico.'], 409);
         }
-
-        //Validacion para user resico
-        // if($empresa->RegimenFiscal == '626'){
-        //     $total_facturado = $this->getTotalFacturado($empresa->user_id);
-
-        //     if($total_facturado >= 290000){
-        //         return response()->json(['error'=>'Ya alcanzaste el límite de $290,000 pesos mensuales facturables para usuarios con Régimen Simplificado de Confianza'], 409);
-        //     }else if(($total_facturado+$request->input('Total')) >= 290000){
-        //         return response()->json(['error'=>'El total de la factura excede el límite de $290,000 pesos mensuales facturables para usuarios con Régimen Simplificado de Confianza'], 409);
-        //     }
-        // }
 
         $limite_facturacion = $this->determinarLimiteFacturacion($empresa->Rfc,$empresa->RegimenFiscal);
         if($limite_facturacion != null && $limite_facturacion != 0){
@@ -1290,36 +1193,6 @@ class FacturaController extends Controller
             return response()->json(['error'=>'Factura sin conceptos.'], 409);
         }
 
-        //verificar stock
-        for ($i=0; $i < count($conceptos); $i++) { 
-            if ($conceptos[$i]->producto_id) {
-                
-                $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                    ->whereNull('flag_eliminado')
-                    ->first();
-
-                if (!$producto)
-                {
-                    return response()->json([
-                        'error'=>'No existe el producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-
-                if ($producto->stock == 0) {
-                    return response()->json([
-                        'error'=>'No hay unidades disponibles del producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-                
-                if ($producto->stock < $conceptos[$i]->Cantidad) {
-                    return response()->json([
-                        'error'=>'Solo hay '.$producto->stock.' unidades disponibles del producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-
-            }
-        }
-
         $pedidoCurso = CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->where('status', 0)
@@ -1334,6 +1207,7 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->first();   
 
         //elimino cotizacion curso desde el panel en caso de que tenga
@@ -1341,16 +1215,16 @@ class FacturaController extends Controller
             for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                 $pedidoCurso->conceptos[$i]->delete();
             }
-            $pedidoCurso->receptor->delete();
+            if ($pedidoCurso->emisor) {
+                $pedidoCurso->emisor->delete();
+            }
+            if ($pedidoCurso->receptor) {
+                $pedidoCurso->receptor->delete();
+            }
             $pedidoCurso->delete();
         } 
 
         //Iniciar proceso de facturacion
-        // $Folio = (CfdiComprobante::count())+1;
-
-        // $Serie = (CfdiComprobante::
-        //     where('emisor_id',$empresa->id)
-        //     ->count())+1;
 
         $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
@@ -1365,8 +1239,6 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            // 'Serie'=>"S-".$empresa->id."-".$Serie,
-            // 'Folio'=>"F-".$empresa->id."-".$Folio,
             'Serie'=>$Serie,
             'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
@@ -1385,11 +1257,19 @@ class FacturaController extends Controller
             'MetodoPago'=>$request->input('MetodoPago'),
             'LugarExpedicion'=>$empresa->CP,
             'Confirmacion'=>"",
-            //'estado'=>null,
-            //'function'=>null,
             'TasaIva'=>$request->input('TasaIva'),
             'TasaIsr'=>$request->input('TasaIsr'),
             'Tipo'=>$request->input('Tipo'),
+            'user_id'=>$empresa->user_id,
+        ]);
+
+        //crear el emisor
+        $newObjEmisor=CfdiEmisor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$empresa->Rfc,
+            'RazonSocial'=>$empresa->RazonSocial,
+            'RegimenFiscal'=>$empresa->RegimenFiscal,
+            'CP'=>$empresa->CP,
         ]);
 
         //crear el receptor
@@ -1421,7 +1301,6 @@ class FacturaController extends Controller
                 'Descuento' => $conceptos[$i]->Descuento,
                 'ObjetoImp' => $conceptos[$i]->ObjetoImp,
                 'ObjetoImpRet' => $conceptos[$i]->ObjetoImpRet,
-                'producto_id' => $conceptos[$i]->producto_id,
             ]);
         }
 
@@ -1443,6 +1322,7 @@ class FacturaController extends Controller
                 ->with('archivo')
                 ->with('mi_forma_pago')
                 ->with('mi_metodo_pago')
+                ->with('emisor')
                 ->first();   
 
             //elimino cotizacion curso desde el panel en caso de que tenga
@@ -1450,7 +1330,12 @@ class FacturaController extends Controller
                 for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                     $pedidoCurso->conceptos[$i]->delete();
                 }
-                $pedidoCurso->receptor->delete();
+                if ($pedidoCurso->emisor) {
+                    $pedidoCurso->emisor->delete();
+                }
+                if ($pedidoCurso->receptor) {
+                    $pedidoCurso->receptor->delete();
+                }
                 $pedidoCurso->delete();
             }
 
@@ -1490,7 +1375,6 @@ class FacturaController extends Controller
                     'pdf' => $document,
                 ]);
 
-
             //crear o actualizar cliente
             $clienteExiste = CfdiCliente::noEliminados()
                 ->where('empresa_id',$empresa_id)
@@ -1512,6 +1396,7 @@ class FacturaController extends Controller
                     'UsoCFDI'=>$request->input('UsoCFDI'),
                     'Email'=>$request->input('Email'),
                     'user_id'=>$empresa->user_id,
+                    'origen'=>'cfdi',
                 ]);
             }else if($clienteExiste){
                 $clienteExiste->Nombre = $request->input('Nombre');
@@ -1521,25 +1406,6 @@ class FacturaController extends Controller
                 $clienteExiste->Email = $request->input('Email');
                 $clienteExiste->save();
             }
-
-            //Descontar inventario
-            for ($i=0; $i < count($conceptos); $i++) { 
-                if ($conceptos[$i]->producto_id) {
-                    
-                    $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                        ->whereNull('flag_eliminado')
-                        ->first();
-
-                    if ($producto)
-                    {
-                        $stock = $producto->stock - $conceptos[$i]->Cantidad;
-                        $producto->stock = $stock;
-                        $producto->save();
-                    }
-
-                }
-            }
-
 
             try {
                 $this->emailFactura($pedidoCurso->id); 
@@ -1904,11 +1770,6 @@ class FacturaController extends Controller
         $datos['xml_debug']='sdk2/timbrados/sin_timbrar_ejemplo_factura4.xml';
 
         // Credenciales de Timbrado
-
-        // $datos['PAC']['usuario'] = 'DEMO700101XXX';
-        // $datos['PAC']['pass'] = 'DEMO700101XXX';
-        // $datos['PAC']['produccion'] = 'NO';
-
         if($emisor->user_id == 6){
             $datos['PAC']['usuario'] = 'DEMO700101XXX';
             $datos['PAC']['pass'] = 'DEMO700101XXX';
@@ -2467,8 +2328,8 @@ class FacturaController extends Controller
             ]);
 
         $usuario = User::whereNull('flag_eliminado')
-            ->with('cfdi_empresa.mi_regimen_fiscal')
-            ->find($user_id);
+            ->where('id', $user_id)
+            ->first();
 
         if (!$usuario)
         {
@@ -2476,36 +2337,19 @@ class FacturaController extends Controller
             return response()->json(['error'=>'Usuario no encontrado'], 404);
         }
 
-        if (!$usuario->cfdi_empresa)
+        $cfdi_empresa=CfdiEmpresa::
+            where('user_id', $user_id)
+            ->where('emisor_ingresos', true)
+            ->first();
+
+        if (!$cfdi_empresa)
         {
             // Devolvemos error codigo http 404
             return response()->json(['error'=>'Emisor CFDI no encontrado'], 404);
         }
 
-        if (
-            $usuario->cfdi_empresa->Rfc == null || $usuario->cfdi_empresa->Rfc == '' ||
-            $usuario->cfdi_empresa->RazonSocial == null || $usuario->cfdi_empresa->RazonSocial == '' ||
-            $usuario->cfdi_empresa->RegimenFiscal == null || $usuario->cfdi_empresa->RegimenFiscal == '' ||
-            $usuario->cfdi_empresa->CP == null || $usuario->cfdi_empresa->CP == '' ||
-            $usuario->cfdi_empresa->cer == null || $usuario->cfdi_empresa->cer == '' ||
-            $usuario->cfdi_empresa->key == null || $usuario->cfdi_empresa->key == '' ||
-            $usuario->cfdi_empresa->pass == null || $usuario->cfdi_empresa->pass == ''
-        )
-        {
-            // Devolvemos error codigo http 404
-            return response()->json(['error'=>'Emisor CFDI no configurado'], 404);
-        }
-
-        if($usuario->cfdi_empresa->pass != '' && $usuario->cfdi_empresa->pass != null){
-            $usuario->cfdi_empresa->pass = 'pass';
-        }else{
-            $usuario->cfdi_empresa->pass = '';
-        }
-
         $producto = CfdiProducto::
-            where('empresa_id',$usuario->cfdi_empresa->id)
-            // ->with('mi_clave_prod_serv')
-            // ->with('mi_clave_unidad')
+            where('user_id', $user_id)
             ->first();
 
         if (!$producto)
@@ -2549,7 +2393,7 @@ class FacturaController extends Controller
             'usuario'=>$usuario
         ], 200);*/
 
-        return $this->timbrarFacturaAutomatica($usuario->cfdi_empresa->id,$total_ingresos_contables);
+        return $this->timbrarFacturaAutomatica($cfdi_empresa->id,$total_ingresos_contables);
         
     }
     
@@ -2577,9 +2421,7 @@ class FacturaController extends Controller
         }
 
         $producto = CfdiProducto::
-            where('empresa_id',$empresa->id)
-            // ->with('mi_clave_prod_serv')
-            // ->with('mi_clave_unidad')
+            where('user_id',$cliente->id)
             ->first();
 
         if (!$producto)
@@ -2602,6 +2444,7 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->first();   
 
         //elimino cotizacion curso desde el panel en caso de que tenga
@@ -2609,16 +2452,16 @@ class FacturaController extends Controller
             for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                 $pedidoCurso->conceptos[$i]->delete();
             }
-            $pedidoCurso->receptor->delete();
+            if ($pedidoCurso->emisor) {
+                $pedidoCurso->emisor->delete();
+            }
+            if ($pedidoCurso->receptor) {
+                $pedidoCurso->receptor->delete();
+            }
             $pedidoCurso->delete();
         } 
 
         //Iniciar proceso de facturacion
-        // $Folio = (CfdiComprobante::count())+1;
-
-        // $Serie = (CfdiComprobante::
-        //     where('emisor_id',$empresa->id)
-        //     ->count())+1;
 
         $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
@@ -2642,8 +2485,6 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            // 'Serie'=>"S-".$empresa->id."-".$Serie,
-            // 'Folio'=>"F-".$empresa->id."-".$Folio,
             'Serie'=>$Serie,
             'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
@@ -2662,11 +2503,19 @@ class FacturaController extends Controller
             'MetodoPago'=>"2",
             'LugarExpedicion'=>$empresa->CP,
             'Confirmacion'=>"",
-            //'estado'=>null,
-            //'function'=>null,
             'TasaIva'=>0,
             'TasaIsr'=>0,
             'Tipo'=>2,
+            'user_id'=>$empresa->user_id,
+        ]);
+
+        //crear el emisor
+        $newObjEmisor=CfdiEmisor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$empresa->Rfc,
+            'RazonSocial'=>$empresa->RazonSocial,
+            'RegimenFiscal'=>$empresa->RegimenFiscal,
+            'CP'=>$empresa->CP,
         ]);
 
         //crear el receptor
@@ -2717,6 +2566,7 @@ class FacturaController extends Controller
                 ->with('archivo')
                 ->with('mi_forma_pago')
                 ->with('mi_metodo_pago')
+                ->with('emisor')
                 ->first();   
 
             //elimino cotizacion curso desde el panel en caso de que tenga
@@ -2724,7 +2574,12 @@ class FacturaController extends Controller
                 for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                     $pedidoCurso->conceptos[$i]->delete();
                 }
-                $pedidoCurso->receptor->delete();
+                if ($pedidoCurso->emisor) {
+                    $pedidoCurso->emisor->delete();
+                }
+                if ($pedidoCurso->receptor) {
+                    $pedidoCurso->receptor->delete();
+                }
                 $pedidoCurso->delete();
             }
 
@@ -2800,7 +2655,8 @@ class FacturaController extends Controller
             //where(DB::raw('DAY(created_at)'),$dia_actual)
             where(DB::raw('MONTH(created_at)'),$mes_actual)
             ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-            ->where('emisor_id',$usuario->cfdi_empresa->id)
+            //->where('emisor_id',$usuario->cfdi_empresa->id)
+            ->where('user_id',$user_id)
             ->where(function ($query) {
                 $query
                     ->where('status',1)
@@ -2989,6 +2845,7 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->find($recurrente->factura_id);
 
         if(!$factura){
@@ -3069,47 +2926,6 @@ class FacturaController extends Controller
             return response()->json(['error'=>'Factura base sin conceptos.'], 409);
         }
 
-        //verificar stock
-        for ($i=0; $i < count($conceptos); $i++) { 
-            if ($conceptos[$i]->producto_id) {
-                
-                $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                    ->whereNull('flag_eliminado')
-                    ->first();
-
-                if (!$producto)
-                {
-                    $recurrente->log_run = 'No existe el producto '.$conceptos[$i]->Descripcion;
-                    $recurrente->save();
-
-                    return response()->json([
-                        'error'=>'No existe el producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-
-                if ($producto->stock == 0) {
-
-                    $recurrente->log_run = 'No hay unidades disponibles del producto '.$conceptos[$i]->Descripcion;
-                    $recurrente->save();
-
-                    return response()->json([
-                        'error'=>'No hay unidades disponibles del producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-                
-                if ($producto->stock < $conceptos[$i]->Cantidad) {
-
-                    $recurrente->log_run = 'Solo hay '.$producto->stock.' unidades disponibles del producto '.$conceptos[$i]->Descripcion;
-                    $recurrente->save();
-
-                    return response()->json([
-                        'error'=>'Solo hay '.$producto->stock.' unidades disponibles del producto '.$conceptos[$i]->Descripcion
-                    ], 409);
-                }
-
-            }
-        }
-
         $pedidoCurso = CfdiComprobante::
             where('emisor_id',$empresa->id)
             ->where('status', 0)
@@ -3124,6 +2940,7 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->first();   
 
         //elimino cotizacion curso desde el panel en caso de que tenga
@@ -3131,7 +2948,12 @@ class FacturaController extends Controller
             for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                 $pedidoCurso->conceptos[$i]->delete();
             }
-            $pedidoCurso->receptor->delete();
+            if ($pedidoCurso->emisor) {
+                $pedidoCurso->emisor->delete();
+            }
+            if ($pedidoCurso->receptor) {
+                $pedidoCurso->receptor->delete();
+            }
             $pedidoCurso->delete();
         } 
 
@@ -3155,8 +2977,6 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            // 'Serie'=>"S-".$empresa->id."-".$Serie,
-            // 'Folio'=>"F-".$empresa->id."-".$Folio,
             'Serie'=>$Serie,
             'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
@@ -3175,11 +2995,19 @@ class FacturaController extends Controller
             'MetodoPago'=>$factura->MetodoPago,
             'LugarExpedicion'=>$empresa->CP,
             'Confirmacion'=>"",
-            //'estado'=>null,
-            //'function'=>null,
             'TasaIva'=>$factura->TasaIva,
             'TasaIsr'=>$factura->TasaIsr,
             'Tipo'=>$factura->Tipo,
+            'user_id'=>$empresa->user_id,
+        ]);
+
+        //crear el emisor
+        $newObjEmisor=CfdiEmisor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$empresa->Rfc,
+            'RazonSocial'=>$empresa->RazonSocial,
+            'RegimenFiscal'=>$empresa->RegimenFiscal,
+            'CP'=>$empresa->CP,
         ]);
 
         //crear el receptor
@@ -3211,7 +3039,6 @@ class FacturaController extends Controller
                 'Descuento' => $conceptos[$i]->Descuento,
                 'ObjetoImp' => $conceptos[$i]->ObjetoImp,
                 'ObjetoImpRet' => $conceptos[$i]->ObjetoImpRet,
-                'producto_id' => $conceptos[$i]->producto_id,
             ]);
         }
 
@@ -3233,6 +3060,7 @@ class FacturaController extends Controller
                 ->with('archivo')
                 ->with('mi_forma_pago')
                 ->with('mi_metodo_pago')
+                ->with('emisor')
                 ->first();   
 
             //elimino cotizacion curso desde el panel en caso de que tenga
@@ -3240,7 +3068,12 @@ class FacturaController extends Controller
                 for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                     $pedidoCurso->conceptos[$i]->delete();
                 }
-                $pedidoCurso->receptor->delete();
+                if ($pedidoCurso->emisor) {
+                    $pedidoCurso->emisor->delete();
+                }
+                if ($pedidoCurso->receptor) {
+                    $pedidoCurso->receptor->delete();
+                }
                 $pedidoCurso->delete();
             }
 
@@ -3282,24 +3115,6 @@ class FacturaController extends Controller
                 ->update([
                     'pdf' => $document,
                 ]);
-
-            //Descontar inventario
-            for ($i=0; $i < count($conceptos); $i++) { 
-                if ($conceptos[$i]->producto_id) {
-                    
-                    $producto = Producto::where('id', $conceptos[$i]->producto_id)
-                        ->whereNull('flag_eliminado')
-                        ->first();
-
-                    if ($producto)
-                    {
-                        $stock = $producto->stock - $conceptos[$i]->Cantidad;
-                        $producto->stock = $stock;
-                        $producto->save();
-                    }
-
-                }
-            }
 
 
             try {
@@ -3724,7 +3539,6 @@ class FacturaController extends Controller
 
         $cliente = User::whereNull('flag_eliminado')
             ->where('id', $orden->user_id)
-            ->with('cfdi_empresa')
             ->first();
 
         if (!$cliente)
@@ -3743,15 +3557,20 @@ class FacturaController extends Controller
             ], 400);
         }
 
-        if (!$cliente->cfdi_empresa)
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $cliente->id)
+            ->where('emisor_pos', true)
+            ->first();
+
+        if (!$cfdi_empresa)
         {
             return response()->json([
                 'success' => false,
-                'message' => 'Empresa no encontrada.'
+                'message' => 'Para crear una factura, primero debes configurar tus datos de emisor y activar la función POS al emisor.'
             ], 404);
         }
 
-        $empresa = $cliente->cfdi_empresa;
+        $empresa = $cfdi_empresa;
 
         // --- Validar datos de Emisor ---
         $camposRequeridosEmisor = [
@@ -4113,6 +3932,7 @@ class FacturaController extends Controller
             ->with('archivo')
             ->with('mi_forma_pago')
             ->with('mi_metodo_pago')
+            ->with('emisor')
             ->first();   
 
         //elimino cotizacion curso desde el panel en caso de que tenga
@@ -4120,16 +3940,16 @@ class FacturaController extends Controller
             for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                 $pedidoCurso->conceptos[$i]->delete();
             }
-            $pedidoCurso->receptor->delete();
+            if ($pedidoCurso->emisor) {
+                $pedidoCurso->emisor->delete();
+            }
+            if ($pedidoCurso->receptor) {
+                $pedidoCurso->receptor->delete();
+            }
             $pedidoCurso->delete();
         } 
 
         //Iniciar proceso de facturacion
-        // $Folio = (CfdiComprobante::count())+1;
-
-        // $Serie = (CfdiComprobante::
-        //     where('emisor_id',$empresa->id)
-        //     ->count())+1;
 
         $contador = (CfdiComprobante::
             where('emisor_id',$empresa->id)
@@ -4144,8 +3964,6 @@ class FacturaController extends Controller
             'receptor_id'=>null,
             'status'=>0,
             'flag_cancelada'=>null,
-            // 'Serie'=>"S-".$empresa->id."-".$Serie,
-            // 'Folio'=>"F-".$empresa->id."-".$Folio,
             'Serie'=>$Serie,
             'Folio'=>$Folio,
             'Fecha'=>date('Y-m-d\TH:i:s', time() - (60*60)),
@@ -4167,6 +3985,16 @@ class FacturaController extends Controller
             'TasaIva'=>$TasaIva,
             'TasaIsr'=>$TasaIsr,
             'Tipo'=>$Tipo,
+            'user_id'=>$empresa->user_id,
+        ]);
+
+        //crear el emisor
+        $newObjEmisor=CfdiEmisor::create([
+            'comprobante_id'=>$pedidoCurso->id,
+            'Rfc'=>$empresa->Rfc,
+            'RazonSocial'=>$empresa->RazonSocial,
+            'RegimenFiscal'=>$empresa->RegimenFiscal,
+            'CP'=>$empresa->CP,
         ]);
 
         //crear el receptor
@@ -4220,6 +4048,7 @@ class FacturaController extends Controller
                 ->with('archivo')
                 ->with('mi_forma_pago')
                 ->with('mi_metodo_pago')
+                ->with('emisor')
                 ->first();   
 
             //elimino cotizacion curso desde el panel en caso de que tenga
@@ -4227,7 +4056,12 @@ class FacturaController extends Controller
                 for ($i=0; $i < count($pedidoCurso->conceptos); $i++) { 
                     $pedidoCurso->conceptos[$i]->delete();
                 }
-                $pedidoCurso->receptor->delete();
+                if ($pedidoCurso->emisor) {
+                    $pedidoCurso->emisor->delete();
+                }
+                if ($pedidoCurso->receptor) {
+                    $pedidoCurso->receptor->delete();
+                }
                 $pedidoCurso->delete();
             }
 
@@ -4359,7 +4193,6 @@ class FacturaController extends Controller
             
             $cliente = User::whereNull('flag_eliminado')
                 ->where('id', $orden->user_id)
-                ->with('cfdi_empresa')
                 ->first();
 
             if (!$cliente)
@@ -4370,15 +4203,28 @@ class FacturaController extends Controller
                 ], 404);
             }
 
-            if (!$cliente->cfdi_empresa)
-            {
+            $comprobante = CfdiComprobante::find($orden->comprobante_id);
+
+            if(!$comprobante){
                 return response()->json([
                     'success' => false,
-                    'message' => 'Empresa no encontrada.'
+                    'message' => 'Comprobante asociado a la orden no encontrado.'
                 ], 404);
             }
 
-            $empresa = $cliente->cfdi_empresa;
+            $cfdi_empresa = CfdiEmpresa::
+                where('id', $comprobante->emisor_id)
+                ->first();
+
+            if (!$cfdi_empresa)
+            {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Emisor CFDI no encontrado.'
+                ], 404);
+            }
+
+            $empresa = $cfdi_empresa;
 
             // --- Validar datos de Emisor ---
             $camposRequeridosEmisor = [
@@ -4451,6 +4297,123 @@ class FacturaController extends Controller
             'message' => 'Venta cancelada correctamente.'
         ]);
         
+    }
+
+    public function migrarEmisoresLegacy() {
+        // 1. Cargamos 'emisor' de antemano (Eager Loading) para evitar el N+1 del exists()
+        $cfdis = CfdiComprobante::with('emisor')
+            ->select('id', 'user_id', 'emisor_id')
+            ->get();
+
+        $emisorIds = $cfdis->pluck('emisor_id')->unique();
+
+        $empresas = CfdiEmpresa::select('id', 'user_id', 'Rfc', 'RazonSocial', 'RegimenFiscal', 'CP')
+            ->whereIn('id', $emisorIds)
+            ->get()
+            ->keyBy('id');
+
+        $migradas = 0;
+        $omitidas = 0;
+
+        foreach ($cfdis as $cfdi) {
+            $empresa = $empresas->get($cfdi->emisor_id);
+
+            if ($empresa) {
+                // Solo guardamos si el user_id es diferente para ahorrar recursos
+                if ($cfdi->user_id !== $empresa->user_id) {
+                    $cfdi->user_id = $empresa->user_id;
+                    $cfdi->save();
+                }
+            }
+
+            // Al usar with('emisor'), esto ya no hace una consulta extra, lo mira en memoria
+            if ($cfdi->emisor) { 
+                $omitidas++;
+                continue;
+            }
+
+            if ($empresa) {
+                CfdiEmisor::create([
+                    'comprobante_id' => $cfdi->id,
+                    'Rfc'            => $empresa->Rfc,
+                    'RazonSocial'    => $empresa->RazonSocial,
+                    'RegimenFiscal'  => $empresa->RegimenFiscal,
+                    'CP'             => $empresa->CP,
+                ]);
+
+                $migradas++;
+            }
+        }
+
+        return response()->json([
+            'success'  => true,
+            'message'  => 'Migración de emisores legacy completada.',
+            'migradas' => $migradas,
+            'omitidas' => $omitidas,
+        ]);
+    }
+
+    public function migrarProductosLegacy() {
+        $productos = CfdiProducto::all();
+
+        $migradas = 0;
+        $omitidas = 0;
+
+        for ($i=0; $i < count($productos); $i++) { 
+            $producto = $productos[$i];
+
+            $empresa = CfdiEmpresa::find($producto->empresa_id);
+
+            if(!$empresa){
+                $omitidas++;
+                continue; // Si no encontramos la empresa, omitimos este producto
+            }
+
+            $producto->user_id = $empresa->user_id;
+            $producto->save();
+
+            $migradas++;
+        }
+
+        return response()->json([
+            'success'  => true,
+            'message'  => 'Migración de productos legacy completada.',
+            'migradas' => $migradas,
+            'omitidas' => $omitidas,
+        ]);
+    }
+
+    public function eliminarEmpresasLegacy() {
+        $empresas = CfdiEmpresa::all();
+
+        $migradas = 0;
+        $omitidas = 0;
+
+        for ($i=0; $i < count($empresas); $i++) { 
+            $empresa = $empresas[$i];
+
+            if($empresa->Rfc){
+
+                $empresa->emisor_bot = true;
+                $empresa->emisor_pos = true;
+                $empresa->emisor_ingresos = true;
+                $empresa->save();
+
+                $omitidas++;
+                continue; // Si la empresa tiene datos, omitimos esta empresa
+            }
+
+            $empresa->delete();
+
+            $migradas++;
+        }
+
+        return response()->json([
+            'success'  => true,
+            'message'  => 'Eliminación de empresas legacy completada.',
+            'migradas' => $migradas,
+            'omitidas' => $omitidas,
+        ]);
     }
 
     

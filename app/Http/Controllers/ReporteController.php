@@ -81,19 +81,24 @@ class ReporteController extends Controller
         $total_ingresos_no_contables = 0;
         $total_general = 0;
 
-        if($usuario->cfdi_empresa && $usuario->cfdi_empresa->id){
+        $cfdi_empresa = CfdiEmpresa::
+            where('user_id', $usuario->id)
+            ->first();
 
-            $cfdi_Empresa_id = $usuario->cfdi_empresa->id;
-            $cfdi_Rfc = $usuario->cfdi_empresa->Rfc;
-            $cfdi_RazonSocial = $usuario->cfdi_empresa->RazonSocial;
-            $cfdi_CP = $usuario->cfdi_empresa->CP;
+        if($cfdi_empresa){
+
+            $cfdi_Empresa_id = $cfdi_empresa->id;
+            $cfdi_Rfc = $cfdi_empresa->Rfc;
+            $cfdi_RazonSocial = $cfdi_empresa->RazonSocial;
+            $cfdi_CP = $cfdi_empresa->CP;
 
             //total facturado
             $total_facturado = CfdiComprobante::
                 //where(DB::raw('DAY(created_at)'),$dia_actual)
                 where(DB::raw('MONTH(created_at)'),$mes_actual)
                 ->where(DB::raw('YEAR(created_at)'),$anio_actual)
-                ->where('emisor_id',$usuario->cfdi_empresa->id)
+                // ->where('emisor_id',$usuario->cfdi_empresa->id)
+                ->where('user_id',$usuario->id)
                 ->where(function ($query) {
                     $query
                         ->where('status',1)
